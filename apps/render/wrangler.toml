@@ -1,16 +1,33 @@
-# Production render origin. Deploy needs wrangler: `pnpm add -D wrangler` then
-# `pnpm --filter @marigold/render deploy`. Bind to the wildcard
-# *.marigoldusercontent.com (a SEPARATE registrable domain from the app).
+# Production render origin (the isolated, untrusted-content host).
+# Deploy: `pnpm --filter @marigold/render deploy`
+#
+# Prereqs (one-time, see DEPLOY.md):
+#   1. R2 bucket exists:        wrangler r2 bucket create marigold-blobs
+#   2. Public key as a secret:  wrangler secret put RENDER_TOKEN_PUBLIC_KEY
+#   3. The render domain (e.g. marigoldusercontent.com) is a zone on your
+#      Cloudflare account, and the wildcard route below is enabled.
+
 name = "marigold-render"
 main = "src/worker.ts"
 compatibility_date = "2024-12-01"
 
-# Untrusted doc bytes live in R2; the Worker reads them via this binding.
+# Bind to the wildcard subdomain of the SEPARATE render domain so every doc gets
+# its own origin: d-<rand>.marigoldusercontent.com. Uncomment + set your zone.
+# routes = [
+#   { pattern = "*.marigoldusercontent.com", custom_domain = false, zone_name = "marigoldusercontent.com" }
+# ]
+
+# Untrusted doc bytes live in R2; the Worker reads them via this binding (read
+# is all it needs — the app writes blobs via the S3 API).
 [[r2_buckets]]
 binding = "BLOBS"
 bucket_name = "marigold-blobs"
 
 [vars]
+# The app origin allowed to frame docs (CSP frame-ancestors). Set to your app URL.
 APP_ORIGIN = "https://marigold.app"
-# RENDER_TOKEN_PUBLIC_KEY is set as a secret:
+# RENDER_TOKEN_PUBLIC_KEY is set as a secret (NOT here):
 #   wrangler secret put RENDER_TOKEN_PUBLIC_KEY
+
+[observability]
+enabled = true
