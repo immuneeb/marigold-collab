@@ -1,0 +1,16 @@
+# Production render origin. Deploy needs wrangler: `pnpm add -D wrangler` then
+# `pnpm --filter @marigold/render deploy`. Bind to the wildcard
+# *.marigoldusercontent.com (a SEPARATE registrable domain from the app).
+name = "marigold-render"
+main = "src/worker.ts"
+compatibility_date = "2024-12-01"
+
+# Untrusted doc bytes live in R2; the Worker reads them via this binding.
+[[r2_buckets]]
+binding = "BLOBS"
+bucket_name = "marigold-blobs"
+
+[vars]
+APP_ORIGIN = "https://marigold.app"
+# RENDER_TOKEN_PUBLIC_KEY is set as a secret:
+#   wrangler secret put RENDER_TOKEN_PUBLIC_KEY

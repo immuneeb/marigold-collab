@@ -1,0 +1,26 @@
+# deps
+node_modules/
+.pnpm-store/
+
+# build
+.next/
+dist/
+out/
+.turbo/
+*.tsbuildinfo
+
+# env / secrets
+.env
+.env.*
+!.env.example
+
+# local data
+.pglite/
+.blobs/
+.wrangler/
+coverage/
+
+# os / editor
+.DS_Store
+*.log
+.gstack/

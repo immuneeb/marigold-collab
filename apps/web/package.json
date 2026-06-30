@@ -1,0 +1,32 @@
+{
+  "name": "@marigold/web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@marigold/core": "workspace:*",
+    "@marigold/db": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.26.0",
+    "drizzle-orm": "^0.38.3",
+    "jose": "^5.9.6",
+    "mcp-handler": "^1.0.1",
+    "next": "^15.1.6",
+    "next-auth": "beta",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "@types/react": "^19.0.7",
+    "@types/react-dom": "^19.0.3",
+    "dotenv": "^16.4.7",
+    "typescript": "^5.7.3"
+  }
+}
