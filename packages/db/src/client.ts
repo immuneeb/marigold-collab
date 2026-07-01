@@ -19,14 +19,32 @@ export function connectionUrl(): string {
   );
 }
 
+/**
+ * postgres.js client. Sets SSL explicitly (it doesn't reliably honor `sslmode`
+ * in the URL) and strips params it mishandles (`channel_binding`). Neon and
+ * other hosted PG require TLS; localhost does not. prepare:false is
+ * pooler/PGlite-safe.
+ */
+export function createSql(url: string): ReturnType<typeof postgres> {
+  const u = new URL(url);
+  u.searchParams.delete("channel_binding");
+  const sslmode = u.searchParams.get("sslmode");
+  u.searchParams.delete("sslmode");
+  const isLocal = /^(localhost|127\.0\.0\.1|\[?::1\]?)$/.test(u.hostname);
+  const ssl =
+    sslmode === "require" || sslmode === "verify-full" || !isLocal
+      ? "require"
+      : undefined;
+  return postgres(u.toString(), { prepare: false, max: 10, ssl });
+}
+
 const globalForDb = globalThis as unknown as {
   __marigoldSql?: ReturnType<typeof postgres>;
   __marigoldDb?: DB;
 };
 
 function createClient() {
-  // prepare:false keeps us compatible with the PGlite socket server and poolers.
-  return postgres(connectionUrl(), { prepare: false, max: 10 });
+  return createSql(connectionUrl());
 }
 
 const sql = globalForDb.__marigoldSql ?? createClient();
