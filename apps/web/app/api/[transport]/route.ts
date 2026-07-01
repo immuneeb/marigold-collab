@@ -4,6 +4,7 @@ import { desc, eq } from "drizzle-orm";
 import {
   authorize,
   createDoc,
+  deinstrumentHtml,
   getBlobStore,
   IngestError,
   renderOriginFor,
@@ -11,6 +12,11 @@ import {
 } from "@marigold/core";
 import { db, docs } from "@marigold/db";
 import { actorForUserId } from "@/lib/actor";
+import {
+  getComment,
+  listComments,
+  setCommentStatus,
+} from "@/lib/comments";
 import { sendInvite } from "@/lib/invite";
 import { verifyAccessToken } from "@/lib/oauth/tokens";
 import { upsertShare } from "@/lib/shares";
@@ -42,7 +48,8 @@ async function currentHtmlOf(latestVersionId: string | null): Promise<string | n
   const sha = manifest?.["index.html"];
   if (!sha) return null;
   const bytes = await store.getBlob(sha);
-  return bytes ? new TextDecoder().decode(bytes) : null;
+  // Return clean HTML — strip Marigold's injected ids + agent.
+  return bytes ? deinstrumentHtml(new TextDecoder().decode(bytes)) : null;
 }
 
 const baseHandler = createMcpHandler(
@@ -214,6 +221,61 @@ const baseHandler = createMcpHandler(
           inviteSent: invite.sent,
           inviteLink: invite.link,
         });
+      },
+    );
+
+    server.registerTool(
+      "get_comments",
+      {
+        title: "Get comments",
+        description:
+          "Read human feedback on a doc. Each comment includes the element text it's anchored to, so you can revise the HTML and call update_doc — comments re-anchor automatically.",
+        inputSchema: {
+          docId: z.string(),
+          status: z.enum(["open", "resolved", "orphaned"]).optional(),
+        },
+      },
+      async ({ docId, status }, extra: ToolExtra) => {
+        const userId = userIdOf(extra);
+        if (!userId) return fail("unauthenticated");
+        const actor = await actorForUserId(userId);
+        const { ok: allowed } = await authorize(docId, actor, "view");
+        if (!allowed) return fail("not authorized to view this doc");
+
+        const rows = await listComments(docId, status);
+        const list = rows.map((c) => {
+          const a = (c.anchor ?? {}) as { textQuote?: { exact?: string } };
+          return {
+            id: c.id,
+            threadId: c.parentId ?? c.id,
+            isReply: !!c.parentId,
+            author: c.authorName ?? "someone",
+            body: c.body,
+            status: c.status,
+            anchoredText: a.textQuote?.exact ?? null,
+          };
+        });
+        return ok({ comments: list });
+      },
+    );
+
+    server.registerTool(
+      "resolve_comment",
+      {
+        title: "Resolve comment",
+        description: "Mark a comment thread resolved once you've addressed it.",
+        inputSchema: { commentId: z.string() },
+      },
+      async ({ commentId }, extra: ToolExtra) => {
+        const userId = userIdOf(extra);
+        if (!userId) return fail("unauthenticated");
+        const c = await getComment(commentId);
+        if (!c) return fail("comment not found");
+        const actor = await actorForUserId(userId);
+        const { ok: allowed } = await authorize(c.docId, actor, "update");
+        if (!allowed) return fail("not authorized");
+        await setCommentStatus(commentId, "resolved");
+        return ok({ ok: true });
       },
     );
   },

@@ -4,9 +4,11 @@ import {
   authorize,
   config,
   getDocBySlug,
+  roleCan,
   signRenderToken,
 } from "@marigold/core";
 import { currentActor } from "@/lib/actor";
+import { ViewerClient } from "./viewer-client";
 
 export const runtime = "nodejs";
 
@@ -57,7 +59,6 @@ export default async function ViewerPage({ params }: Params) {
     );
   }
 
-  // Owner previews `latest`; everyone else sees `published`.
   const versionId =
     role === "owner"
       ? (doc.latestVersionId ?? doc.publishedVersionId)
@@ -75,36 +76,14 @@ export default async function ViewerPage({ params }: Params) {
   const iframeSrc = `${renderOrigin}/${versionId}/index.html?t=${encodeURIComponent(token)}`;
 
   return (
-    <div className="viewer">
-      <header className="viewer-bar">
-        <div className="viewer-left">
-          <Link href="/" className="wordmark" style={{ textDecoration: "none" }}>
-            🌼
-          </Link>
-          <span className="viewer-title">{doc.title ?? "Untitled"}</span>
-          <span className="ugc-pill" title="Rendered in an isolated origin">
-            user-generated · isolated
-          </span>
-        </div>
-        <div className="viewer-right">
-          {role === "owner" && (
-            <Link href={`/d/${slug}/manage`} className="btn-ghost">
-              Manage
-            </Link>
-          )}
-          <Link href="/" className="btn-ghost">
-            Dashboard
-          </Link>
-        </div>
-      </header>
-      {/* The untrusted doc: separate origin + sandbox (allow-scripts only, NO
-          allow-same-origin). It cannot reach this page, its cookies, or the network. */}
-      <iframe
-        className="docframe"
-        sandbox="allow-scripts"
-        src={iframeSrc}
-        title={doc.title ?? "doc"}
-      />
-    </div>
+    <ViewerClient
+      docId={doc.id}
+      slug={slug}
+      title={doc.title}
+      versionId={versionId}
+      iframeSrc={iframeSrc}
+      canComment={!!role && roleCan(role, "comment")}
+      isOwner={role === "owner"}
+    />
   );
 }

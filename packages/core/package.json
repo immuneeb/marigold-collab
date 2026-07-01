@@ -18,7 +18,8 @@
     "@aws-sdk/client-s3": "^3.726.0",
     "@marigold/db": "workspace:*",
     "drizzle-orm": "^0.38.3",
-    "jose": "^5.9.6"
+    "jose": "^5.9.6",
+    "node-html-parser": "^7.0.1"
   },
   "devDependencies": {
     "@types/node": "^22.10.5",

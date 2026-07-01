@@ -6,7 +6,8 @@ describe("ingest", () => {
   it("turns html shorthand into an index.html manifest", () => {
     const r = ingest({ html: "<h1>hi</h1>" });
     expect(Object.keys(r.manifest)).toEqual(["index.html"]);
-    expect(r.byteSize).toBe(11);
+    // HTML is instrumented at ingest (ids + agent), so it grows past the raw 11 bytes.
+    expect(r.byteSize).toBeGreaterThan(11);
     expect(r.contentHash).toMatch(/^[0-9a-f]{64}$/);
   });
 

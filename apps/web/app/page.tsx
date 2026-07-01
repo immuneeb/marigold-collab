@@ -3,13 +3,13 @@ import { and, desc, eq, inArray } from "drizzle-orm";
 import { db, docs, shares } from "@marigold/db";
 import { auth, signOut } from "@/auth";
 import { currentActor } from "@/lib/actor";
-import { redirect } from "next/navigation";
+import { Landing } from "./landing";
 
 export const runtime = "nodejs";
 
-export default async function DashboardPage() {
+export default async function HomePage() {
   const session = await auth();
-  if (!session?.user) redirect("/login");
+  if (!session?.user) return <Landing />;
   const actor = await currentActor();
 
   const myDocs = await db

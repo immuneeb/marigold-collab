@@ -1,6 +1,7 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import {
   blobs as blobsTable,
+  comments,
   db,
   docs,
   docVersions,
@@ -10,8 +11,52 @@ import {
 import { getBlobStore } from "./blobs";
 import { config, renderOriginFor } from "./env";
 import { ingest, type IngestResult, type InputFile } from "./ingest";
+import { type CommentAnchor, resolveAnchor } from "./instrument";
 import { makeSlug } from "./slug";
 import type { BlobStore } from "./types";
+
+function htmlOf(ing: IngestResult): string | null {
+  const f = ing.files.find((x) => x.path === "index.html");
+  return f ? new TextDecoder().decode(f.bytes) : null;
+}
+
+/**
+ * Re-anchor every comment on a doc against a new version's HTML (P5). Resolvable
+ * (marigoldId → css → textQuote) → carry forward + refresh the id; open+
+ * unresolvable → orphaned (retaining the version it was made on); a previously
+ * orphaned comment that resolves again is recovered.
+ */
+export async function reanchorComments(
+  docId: string,
+  newVersionId: string,
+  newHtml: string,
+): Promise<void> {
+  const roots = await db
+    .select({ id: comments.id, anchor: comments.anchor, status: comments.status })
+    .from(comments)
+    .where(and(eq(comments.docId, docId), isNull(comments.parentId)));
+
+  for (const c of roots) {
+    const anchor = (c.anchor ?? {}) as CommentAnchor;
+    const rid = resolveAnchor(newHtml, anchor);
+    if (rid) {
+      await db
+        .update(comments)
+        .set({
+          anchoredVersionId: newVersionId,
+          anchor: { ...anchor, marigoldId: rid },
+          status: c.status === "orphaned" ? "open" : c.status,
+          updatedAt: new Date(),
+        })
+        .where(eq(comments.id, c.id));
+    } else if (c.status === "open") {
+      await db
+        .update(comments)
+        .set({ status: "orphaned", updatedAt: new Date() })
+        .where(eq(comments.id, c.id));
+    }
+  }
+}
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
@@ -219,6 +264,12 @@ export async function updateDoc(input: UpdateDocInput): Promise<VersionResult> {
 
     return { versionId, ordinal };
   });
+
+  // P5: re-anchor comments against the new content.
+  if (!existing) {
+    const html = htmlOf(ing);
+    if (html) await reanchorComments(doc.id, result.versionId, html);
+  }
 
   return {
     docId: doc.id,

@@ -1,4 +1,5 @@
 import type { KeyLike } from "jose";
+import { ANCHOR_AGENT_JS } from "./agent-src";
 import { verifyRenderToken } from "./tokens";
 import type { BlobReader } from "./types";
 
@@ -7,6 +8,8 @@ export interface RenderDeps {
   publicKey: KeyLike;
   /** The app origin allowed to frame docs (CSP frame-ancestors). */
   appOrigin: string;
+  /** Owner-approved outbound origins for a doc (P7 network allowlist). */
+  networkGrants?: (docId: string) => Promise<string[]>;
 }
 
 const CONTENT_TYPES: Record<string, string> = {
@@ -38,18 +41,25 @@ function contentType(path: string): string {
  * 'none'`), and can only be framed by the Marigold app. `'unsafe-inline'` is
  * acceptable *because* of the isolation — AI-generated docs inline scripts.
  */
-function securityHeaders(appOrigin: string, contentTypeValue?: string): Headers {
+function securityHeaders(
+  appOrigin: string,
+  contentTypeValue?: string,
+  grants: string[] = [],
+): Headers {
   const h = new Headers();
   if (contentTypeValue) h.set("Content-Type", contentTypeValue);
+  // Default is fully sandboxed (connect-src 'none'). Owner-approved origins
+  // (P7 allowlist) relax connect-src + img-src for that doc only.
+  const extra = grants.length ? " " + grants.join(" ") : "";
   h.set(
     "Content-Security-Policy",
     [
       "default-src 'self'",
       "script-src 'self' 'unsafe-inline'",
       "style-src 'self' 'unsafe-inline'",
-      "img-src 'self' data:",
+      `img-src 'self' data:${extra}`,
       "font-src 'self' data:",
-      "connect-src 'none'",
+      grants.length ? `connect-src ${grants.join(" ")}` : "connect-src 'none'",
       "base-uri 'none'",
       "form-action 'none'",
       `frame-ancestors ${appOrigin}`,
@@ -82,6 +92,19 @@ export async function handleRender(
 
   if (!versionId) return fail(404, "not found", deps.appOrigin);
 
+  // Serve the trusted anchor agent (public, no token — it's Marigold's own code,
+  // loaded same-origin by every doc for the commenting layer).
+  if (versionId === "__mg") {
+    if (filePath === "agent.js") {
+      const h = new Headers();
+      h.set("Content-Type", "text/javascript; charset=utf-8");
+      h.set("Cache-Control", "public, max-age=3600");
+      h.set("X-Content-Type-Options", "nosniff");
+      return new Response(ANCHOR_AGENT_JS, { status: 200, headers: h });
+    }
+    return fail(404, "not found", deps.appOrigin);
+  }
+
   // v1: token in the URL (?t=). See plan: cookie-via-redirect conflicts with the
   // cross-site two-domain isolation under third-party-cookie blocking; single-
   // file docs need no cookie, and connect-src 'none' contains the token.
@@ -109,8 +132,14 @@ export async function handleRender(
   const bytes = await deps.storage.getBlob(sha);
   if (!bytes) return fail(404, "blob missing", deps.appOrigin);
 
-  const headers = securityHeaders(deps.appOrigin, contentType(filePath));
-  // Content is immutable + content-addressed -> cache hard.
-  headers.set("Cache-Control", "private, max-age=31536000, immutable");
+  const grants = deps.networkGrants ? await deps.networkGrants(claims.doc) : [];
+  const headers = securityHeaders(deps.appOrigin, contentType(filePath), grants);
+  // Bytes are immutable; but CSP can change with grants, so shorten cache then.
+  headers.set(
+    "Cache-Control",
+    grants.length
+      ? "private, max-age=30"
+      : "private, max-age=31536000, immutable",
+  );
   return new Response(bytes as BodyInit, { status: 200, headers });
 }

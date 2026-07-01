@@ -1,5 +1,15 @@
+import { eq } from "drizzle-orm";
 import type { KeyLike } from "jose";
 import { getBlobStore, handleRender, importRenderPublicKey } from "@marigold/core";
+import { db, networkGrants } from "@marigold/db";
+
+async function networkGrantsFor(docId: string): Promise<string[]> {
+  const rows = await db
+    .select({ origin: networkGrants.origin })
+    .from(networkGrants)
+    .where(eq(networkGrants.docId, docId));
+  return rows.map((r) => r.origin);
+}
 
 // The isolated render origin (deployed as its own Vercel project → its own
 // *.vercel.app origin, which is cross-site to the app). Serves untrusted doc
@@ -24,5 +34,6 @@ export async function GET(request: Request) {
     storage: getBlobStore(),
     publicKey: await publicKey(),
     appOrigin,
+    networkGrants: networkGrantsFor,
   });
 }

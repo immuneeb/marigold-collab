@@ -1,6 +1,7 @@
 import { notFound, redirect } from "next/navigation";
 import { authorize, getDocBySlug } from "@marigold/core";
 import { currentActor } from "@/lib/actor";
+import { listNetworkGrants } from "@/lib/network";
 import { listShares } from "@/lib/shares";
 import { ManageClient } from "./manage-client";
 
@@ -22,6 +23,7 @@ export default async function ManagePage({ params }: Params) {
   }
 
   const shares = await listShares(doc.id);
+  const grants = await listNetworkGrants(doc.id);
 
   return (
     <ManageClient
@@ -32,6 +34,7 @@ export default async function ManagePage({ params }: Params) {
       publishedVersionId={doc.publishedVersionId}
       quarantined={doc.quarantined}
       initialShares={shares}
+      initialGrants={grants.map((g) => g.origin)}
     />
   );
 }

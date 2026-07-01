@@ -12,6 +12,7 @@
   "dependencies": {
     "@marigold/core": "workspace:*",
     "@marigold/db": "workspace:*",
+    "drizzle-orm": "^0.38.3",
     "jose": "^5.9.6",
     "next": "^15.1.6",
     "react": "^19.0.0",

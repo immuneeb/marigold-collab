@@ -1,6 +1,11 @@
 import { config } from "./env";
 import { contentHashOf, sha256Hex } from "./hash";
+import { instrumentHtml } from "./instrument";
 import type { Manifest } from "./types";
+
+function isHtmlPath(path: string): boolean {
+  return /\.html?$/.test(path);
+}
 
 export interface InputFile {
   path: string;
@@ -77,8 +82,19 @@ export function ingest(input: { html?: string; files?: InputFile[] }): IngestRes
 
   for (const f of files) {
     const path = normalizePath(f.path);
-    const bytes =
-      typeof f.content === "string" ? encoder.encode(f.content) : f.content;
+    // HTML gets instrumented at ingest: stable data-marigold-id per element +
+    // the anchor-agent script. Deterministic, so dedup/no-op still hold.
+    let bytes: Uint8Array;
+    if (isHtmlPath(path)) {
+      const src =
+        typeof f.content === "string"
+          ? f.content
+          : new TextDecoder().decode(f.content);
+      bytes = encoder.encode(instrumentHtml(src));
+    } else {
+      bytes =
+        typeof f.content === "string" ? encoder.encode(f.content) : f.content;
+    }
     total += bytes.byteLength;
     if (total > config.maxDocBytes) {
       throw new IngestError(

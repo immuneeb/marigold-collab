@@ -19,6 +19,7 @@ export function ManageClient(props: {
   publishedVersionId: string | null;
   quarantined: boolean;
   initialShares: Share[];
+  initialGrants: string[];
 }) {
   const router = useRouter();
   const [msg, setMsg] = useState<string | null>(null);
@@ -144,6 +145,63 @@ export function ManageClient(props: {
           </button>
         </form>
         {msg && <p className="muted small">{msg}</p>}
+      </section>
+
+      <section className="manage-block">
+        <h2 className="manage-h">Network access</h2>
+        <p className="muted small">
+          By default a doc can make no network calls. Approve origins it may
+          reach (e.g. an API it needs).
+        </p>
+        <ul className="doclist">
+          {props.initialGrants.length === 0 && (
+            <li className="doclink muted small">No approved origins.</li>
+          )}
+          {props.initialGrants.map((o) => (
+            <li key={o} className="doclink">
+              <span>{o}</span>
+              <button
+                className="btn-ghost"
+                disabled={busy}
+                onClick={() =>
+                  call(`/api/docs/${props.docId}/network-grants`, {
+                    method: "DELETE",
+                    headers: { "content-type": "application/json" },
+                    body: JSON.stringify({ origin: o }),
+                  })
+                }
+              >
+                Remove
+              </button>
+            </li>
+          ))}
+        </ul>
+        <form
+          className="share-add"
+          onSubmit={async (e) => {
+            e.preventDefault();
+            const fd = new FormData(e.currentTarget);
+            const { res } = await call(
+              `/api/docs/${props.docId}/network-grants`,
+              {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ origin: fd.get("origin") }),
+              },
+            );
+            if (res.ok) (e.target as HTMLFormElement).reset();
+          }}
+        >
+          <input
+            name="origin"
+            type="url"
+            placeholder="https://api.example.com"
+            required
+          />
+          <button className="btn-secondary" type="submit" disabled={busy}>
+            Approve
+          </button>
+        </form>
       </section>
 
       <section className="manage-block">
