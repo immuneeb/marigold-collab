@@ -15,6 +15,13 @@
       "when": 1782820153957,
       "tag": "0001_rainy_wasp",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1782902255423,
+      "tag": "0002_clever_the_twelve",
+      "breakpoints": true
     }
   ]
 }

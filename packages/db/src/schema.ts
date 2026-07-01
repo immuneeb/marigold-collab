@@ -96,11 +96,14 @@ export const docVersions = pgTable(
   ],
 );
 
-// Content-addressed blobs (dedup across all docs/users).
+// Content-addressed blobs (dedup across all docs/users). `content` (base64) is
+// populated only by the Postgres blob driver (BLOB_DRIVER=pg, e.g. all-Vercel);
+// fs/r2 drivers leave it null and keep bytes in the object store.
 export const blobs = pgTable("blobs", {
   sha256: text("sha256").primaryKey(),
   byteSize: bigint("byte_size", { mode: "number" }).notNull(),
-  storageKey: text("storage_key").notNull(), // key in object storage
+  storageKey: text("storage_key").notNull(), // key in object storage (or "pg/<sha>")
+  content: text("content"), // base64 bytes when BLOB_DRIVER=pg
   createdAt: createdAt(),
 });
 

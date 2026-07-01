@@ -1,108 +1,114 @@
-# Deploying Marigold
+# Deploying Marigold (all-Vercel, no custom domains)
 
-Two independently-deployed pieces on two **separate registrable domains** (the
-claude.ai / claudeusercontent.com isolation model):
+Two Vercel projects from this one repo. Because **`vercel.app` is on the Public
+Suffix List**, `your-app.vercel.app` and `your-render.vercel.app` are treated by
+browsers as different *sites* (cross-site) — the isolation the design needs,
+with no domains to register and no Cloudflare.
 
 ```
- marigold.app                          marigoldusercontent.com
- ┌──────────────────────────┐          ┌─────────────────────────────┐
- │ Next.js app (Vercel)     │          │ Render Worker (Cloudflare)  │
- │ auth · dashboard · API   │  EdDSA   │ d-<rand>.…  serves untrusted │
- │ MCP server · OAuth AS    │  token   │ doc bytes from R2, sandboxed │
- │ viewer (parent frame)    │ ───────▶ │ + strict CSP. PUBLIC key.   │
- └─────────┬────────────────┘          └──────────────┬──────────────┘
-      Neon │ Postgres                          R2 read │
-           ▼                                           ▼
-     (pooled conn)                            bucket: marigold-blobs
-                          app writes blobs ──▶ (S3 API)
+ <app>.vercel.app  ── Next.js app (auth, dashboard, API, MCP, OAuth, viewer)
+        │  signs EdDSA render token
+        ▼
+ <render>.vercel.app ── Next.js render origin (cross-site). Serves untrusted doc
+        │               bytes for a token-authorized version, sandboxed + CSP.
+        ▼
+   Vercel Postgres (Neon) ── users/docs/versions/shares + blob bytes (base64).
 ```
 
-The app holds the EdDSA **private** key and signs render tokens; the Worker holds
-only the **public** key. A Worker compromise cannot forge tokens.
+Two tradeoffs vs. the custom-domain design (both fine for v1, both upgrade
+later): all docs share one render origin (still isolated by the sandbox +
+capability token, not a per-doc subdomain), and the render function reads blobs
+from Postgres (so it isn't fully stateless — scope it to a read-only DB role
+when you harden).
 
-## 0. Accounts / resources you provide
+## 0. You need only: a Vercel account. Everything else is provisioned in Vercel.
 
-- Two domains (any names; the plan uses `marigold.app` + `marigoldusercontent.com`).
-- **Cloudflare** account (DNS for both domains, R2, the Worker).
-- **Vercel** account (the Next.js app).
-- **Neon** account (Postgres).
-- A **Google OAuth** client.
-- (optional) a **Resend** API key for invite emails.
+Pick two project names now (their URLs are predictable):
+`APP  = https://<app>.vercel.app` · `RENDER = https://<render>.vercel.app`.
 
-## 1. Secrets + keys (generate once)
+## 1. Secrets + keys (local, one-time)
 
 ```sh
-openssl rand -base64 32                       # AUTH_SECRET
-openssl rand -base64 32                       # MCP_TOKEN_SECRET
-pnpm --filter @marigold/core keygen           # RENDER_TOKEN_{PRIVATE,PUBLIC}_KEY (+ KID)
+openssl rand -base64 32                 # AUTH_SECRET
+openssl rand -base64 32                 # MCP_TOKEN_SECRET
+pnpm --filter @marigold/core keygen     # RENDER_TOKEN_{PRIVATE,PUBLIC}_KEY (+ KID)
 ```
 
-## 2. Neon (database)
+## 2. Create the two Vercel projects (same repo)
 
-1. Create a project + database named `marigold`.
-2. Copy the **pooled** connection string → app `DATABASE_URL`.
-3. Apply the schema using the **direct** (non-pooled) string:
-   ```sh
-   DATABASE_URL='postgres://…(direct)…/marigold?sslmode=require' pnpm --filter @marigold/db migrate
-   ```
+Both import this Git repo; they differ only in **Root Directory**:
 
-## 3. Cloudflare R2 (blobs)
+| Project | Root Directory | Framework |
+|---|---|---|
+| app | `apps/web` | Next.js |
+| render | `apps/render` | Next.js |
 
-1. `wrangler login`
-2. `wrangler r2 bucket create marigold-blobs`
-3. Create an **R2 S3 API token** → note Access Key ID + Secret. The endpoint is
-   `https://<ACCOUNT_ID>.r2.cloudflarestorage.com`. These become the app's
-   `R2_*` env vars (`BLOB_DRIVER=r2`).
+For each, enable **"Include files outside the Root Directory"** (needed so the
+pnpm workspace + `@marigold/*` packages install). Install command `pnpm install`,
+build `pnpm build`.
 
-## 4. Render Worker (Cloudflare)
+## 3. Postgres (through Vercel)
 
-1. Add `marigoldusercontent.com` as a zone in Cloudflare (update registrar
-   nameservers). A wildcard cert for `*.marigoldusercontent.com` is issued
-   automatically.
-2. In `apps/render/wrangler.toml`, set `APP_ORIGIN` to your app URL and
-   uncomment the `routes` block with your render zone.
-3. Set the public key as a secret + deploy:
-   ```sh
-   pnpm --filter @marigold/render exec wrangler secret put RENDER_TOKEN_PUBLIC_KEY
-   pnpm --filter @marigold/render deploy
-   ```
+Vercel dashboard → **Storage → Create Database → Postgres (Neon)**. Then
+**Connect** that database to **both** projects (it injects `DATABASE_URL` /
+`POSTGRES_URL` into each). Apply the schema from your machine using the database
+connection string (copy it from the Storage tab):
+
+```sh
+DATABASE_URL='postgres://…?sslmode=require' pnpm --filter @marigold/db migrate
+```
+
+## 4. Environment variables
+
+**app project** (Settings → Environment Variables, Production):
+
+```
+APP_ORIGIN=https://<app>.vercel.app
+RENDER_ORIGIN=https://<render>.vercel.app
+AUTH_SECRET=…            AUTH_URL=https://<app>.vercel.app     DEV_AUTH=0
+GOOGLE_CLIENT_ID=…       GOOGLE_CLIENT_SECRET=…
+MCP_TOKEN_SECRET=…
+RENDER_TOKEN_KID=k1
+RENDER_TOKEN_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n…\n-----END PRIVATE KEY-----"
+RENDER_TOKEN_PUBLIC_KEY="-----BEGIN PUBLIC KEY-----\n…\n-----END PUBLIC KEY-----"
+RENDER_TOKEN_TTL=60
+BLOB_DRIVER=pg
+RESEND_API_KEY=…(optional)   EMAIL_FROM=Marigold <you@example.com>
+```
+
+**render project** (only needs these):
+
+```
+APP_ORIGIN=https://<app>.vercel.app          # CSP frame-ancestors
+RENDER_TOKEN_PUBLIC_KEY="-----BEGIN PUBLIC KEY-----\n…"   # public key ONLY
+BLOB_DRIVER=pg
+# DATABASE_URL / POSTGRES_URL are injected by the connected Postgres.
+```
+
+(`DATABASE_URL` is injected into both by step 3.)
 
 ## 5. Google OAuth
 
 Create an OAuth client (Web). Authorized redirect URI:
-`https://marigold.app/api/auth/callback/google`. Authorized JS origin:
-`https://marigold.app`. Copy the client id/secret into the app env.
+`https://<app>.vercel.app/api/auth/callback/google`. Authorized JS origin:
+`https://<app>.vercel.app`. Put the id/secret in the **app** project env.
 
-## 6. Vercel (the app)
+## 6. Deploy + smoke test
 
-1. Import the repo. **Root Directory = `apps/web`**, enable "Include files
-   outside the Root Directory" (so the pnpm workspace + `@marigold/*` packages
-   install). Framework: Next.js. Install: `pnpm install`. Build: `pnpm build`.
-2. Add every variable from `.env.production.example` (Production scope). Set
-   `DEV_AUTH=0`.
-3. Deploy, then add the domain `marigold.app` to the project and point DNS.
+Deploy both projects (push to the branch, or "Deploy" in the dashboard).
 
-## 7. Smoke test
-
-- Sign in with Google → dashboard.
+- Open `https://<app>.vercel.app` → sign in with Google → dashboard.
 - `/new` → paste HTML → it renders in a sandboxed iframe on
-  `d-<rand>.marigoldusercontent.com` (check the frame origin + CSP in devtools).
-- Add the remote MCP server to a client, authorize once, `create_doc`.
-- Share a doc to a second Google account → it appears in their "Shared with me".
+  `https://<render>.vercel.app/...` (check the frame origin + CSP in devtools).
+- Add the remote MCP server (`https://<app>.vercel.app/api/mcp`) to a client,
+  authorize once, `create_doc`.
+- Share a doc to a second Google account → "Shared with me".
 
-## Env var reference
+## Later hardening (when you outgrow v1)
 
-| Variable | App (Vercel) | Worker (wrangler) |
-|---|---|---|
-| `APP_ORIGIN`, `RENDER_BASE_HOST`, `RENDER_BASE_SCHEME` | ✓ | `APP_ORIGIN` only |
-| `AUTH_SECRET`, `AUTH_URL`, `GOOGLE_CLIENT_*`, `DEV_AUTH=0` | ✓ | — |
-| `DATABASE_URL` (Neon pooled) | ✓ | — |
-| `MCP_TOKEN_SECRET` | ✓ | — |
-| `RENDER_TOKEN_PRIVATE_KEY` + `_PUBLIC_KEY` + `_KID` | ✓ (both) | `_PUBLIC_KEY` only (secret) |
-| `BLOB_DRIVER=r2`, `R2_*` | ✓ | — (uses the R2 binding) |
-| `RESEND_API_KEY`, `EMAIL_FROM` | ✓ | — |
-
-## Pre-public-deploy TODO (from the reviews)
-
-Per-account rate limits + doc/byte quotas, and alerting on the render-token-deny
-counter. The kill switch (quarantine) already ships; these gate opening signups.
+- Add custom domains → restore per-doc unguessable subdomains + a fully
+  stateless render origin (swap `BLOB_DRIVER=pg` back to object storage).
+- Give the render project a **read-only** DB role (it only needs
+  `blobs` + `doc_versions`).
+- Per-account rate limits + doc/byte quotas before opening signups (the
+  quarantine kill switch already ships).

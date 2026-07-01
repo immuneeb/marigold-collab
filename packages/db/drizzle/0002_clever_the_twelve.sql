@@ -1,0 +1,1 @@
+ALTER TABLE "blobs" ADD COLUMN "content" text;

@@ -4,20 +4,24 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tsx src/dev-server.ts",
-    "deploy": "wrangler deploy",
+    "dev": "next dev -p 8787",
+    "build": "next build",
+    "start": "next start -p 8787",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@marigold/core": "workspace:*",
-    "jose": "^5.9.6"
+    "@marigold/db": "workspace:*",
+    "jose": "^5.9.6",
+    "next": "^15.1.6",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20250109.0",
     "@types/node": "^22.10.5",
+    "@types/react": "^19.0.7",
+    "@types/react-dom": "^19.0.3",
     "dotenv": "^16.4.7",
-    "tsx": "^4.19.2",
-    "typescript": "^5.7.3",
-    "wrangler": "^4"
+    "typescript": "^5.7.3"
   }
 }

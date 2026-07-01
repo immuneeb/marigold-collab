@@ -10,7 +10,13 @@ export type DB = PostgresJsDatabase<typeof schema>;
  * connects as the OS user (postgres.js fills the username) to the `marigold` db.
  */
 export function connectionUrl(): string {
-  return process.env.DATABASE_URL ?? "postgres://127.0.0.1:5432/marigold";
+  // Vercel's Postgres/Neon integration injects POSTGRES_URL(_*); support both.
+  return (
+    process.env.DATABASE_URL ??
+    process.env.POSTGRES_URL ??
+    process.env.POSTGRES_PRISMA_URL ??
+    "postgres://127.0.0.1:5432/marigold"
+  );
 }
 
 const globalForDb = globalThis as unknown as {

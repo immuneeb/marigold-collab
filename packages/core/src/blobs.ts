@@ -2,6 +2,8 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { dirname, isAbsolute, join, resolve } from "node:path";
+import { eq } from "drizzle-orm";
+import { blobs as blobsTable, db, docVersions } from "@marigold/db";
 import type { BlobStore, Manifest } from "./types";
 
 const require = createRequire(import.meta.url);
@@ -144,13 +146,76 @@ export function s3BlobStore(opts: {
   };
 }
 
+/**
+ * Postgres blob store (BLOB_DRIVER=pg) for the all-Vercel deployment — no object
+ * store. Bytes live in blobs.content (base64); manifests live in the version row
+ * (doc_versions.manifest), so putManifest is a no-op. The render origin reads
+ * from here (gated by the capability token).
+ */
+export function pgBlobStore(): BlobStore {
+  return {
+    async hasBlob(sha) {
+      const r = await db
+        .select({ s: blobsTable.sha256 })
+        .from(blobsTable)
+        .where(eq(blobsTable.sha256, sha))
+        .limit(1);
+      return r.length > 0;
+    },
+    async putBlob(sha, bytes) {
+      const content = Buffer.from(bytes).toString("base64");
+      // Upsert content so a pre-existing content-less row (e.g. written by the
+      // version txn's blob bookkeeping) gets backfilled with the bytes.
+      await db
+        .insert(blobsTable)
+        .values({
+          sha256: sha,
+          byteSize: bytes.byteLength,
+          storageKey: `pg/${sha}`,
+          content,
+        })
+        .onConflictDoUpdate({
+          target: blobsTable.sha256,
+          set: { content, storageKey: `pg/${sha}` },
+        });
+    },
+    async getBlob(sha) {
+      const r = (
+        await db
+          .select({ content: blobsTable.content })
+          .from(blobsTable)
+          .where(eq(blobsTable.sha256, sha))
+          .limit(1)
+      )[0];
+      return r?.content
+        ? new Uint8Array(Buffer.from(r.content, "base64"))
+        : null;
+    },
+    async putManifest() {
+      // Manifest lives in doc_versions.manifest (written with the version row).
+    },
+    async getManifest(versionId) {
+      const r = (
+        await db
+          .select({ m: docVersions.manifest })
+          .from(docVersions)
+          .where(eq(docVersions.id, versionId))
+          .limit(1)
+      )[0];
+      return (r?.m as Manifest | undefined) ?? null;
+    },
+  };
+}
+
 let cached: BlobStore | undefined;
 
-/** App-side factory: BLOB_DRIVER=fs (local) | r2 (prod). */
+/** App-side factory: BLOB_DRIVER=fs (local) | pg (all-Vercel) | r2 (Cloudflare). */
 export function getBlobStore(): BlobStore {
   if (cached) return cached;
   const driver = process.env.BLOB_DRIVER ?? "fs";
-  if (driver === "r2") {
+  if (driver === "pg") {
+    cached = pgBlobStore();
+  } else if (driver === "r2") {
     cached = s3BlobStore({
       endpoint: must("R2_ENDPOINT"),
       bucket: must("R2_BUCKET"),

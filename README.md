@@ -60,9 +60,13 @@ pnpm db:migrate    # apply migrations
 pnpm db:studio     # Drizzle Studio
 ```
 
-## Production (after Phase 3)
+## Production
 
-- App on Vercel, Postgres on Neon (`DATABASE_URL`), blobs on Cloudflare R2,
-  render origin as a Cloudflare Worker on the separate `marigoldusercontent.com`
-  domain. Render tokens are EdDSA-signed (app holds the private key; the Worker
-  only verifies).
+See **[DEPLOY.md](./DEPLOY.md)** — an all-Vercel deploy (no custom domains, no
+Cloudflare): two Vercel projects (app + render origin) on `*.vercel.app`, which
+are cross-site (vercel.app is a public suffix), with Postgres provisioned through
+Vercel and blob bytes stored in Postgres (`BLOB_DRIVER=pg`). Render tokens are
+EdDSA-signed (app holds the private key; the render origin only verifies).
+
+The blob layer is pluggable (`BLOB_DRIVER=fs|pg|r2`), so a custom-domain +
+Cloudflare R2/Worker setup remains available for stronger isolation later.
