@@ -1,5 +1,6 @@
 import type { KeyLike } from "jose";
 import { ANCHOR_AGENT_JS } from "./agent-src";
+import { instrumentHtml } from "./instrument";
 import { verifyRenderToken } from "./tokens";
 import type { BlobReader } from "./types";
 
@@ -129,8 +130,19 @@ export async function handleRender(
   const sha = manifest[filePath];
   if (!sha) return fail(404, "file not found in version", deps.appOrigin);
 
-  const bytes = await deps.storage.getBlob(sha);
+  let bytes = await deps.storage.getBlob(sha);
   if (!bytes) return fail(404, "blob missing", deps.appOrigin);
+
+  // Legacy compatibility: docs ingested before commenting shipped have no
+  // marigold ids / anchor agent baked in. Instrument on the fly — the function
+  // is deterministic, so anchor ids are stable across requests and match what
+  // ingest would produce for the same bytes on the next update.
+  if (/\.html?$/.test(filePath)) {
+    const text = new TextDecoder().decode(bytes);
+    if (!text.includes("data-mg-agent")) {
+      bytes = new TextEncoder().encode(instrumentHtml(text));
+    }
+  }
 
   const grants = deps.networkGrants ? await deps.networkGrants(claims.doc) : [];
   const headers = securityHeaders(deps.appOrigin, contentType(filePath), grants);

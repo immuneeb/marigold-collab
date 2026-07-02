@@ -27,6 +27,7 @@ export function ViewerClient(props: {
   versionId: string;
   iframeSrc: string;
   canComment: boolean;
+  canEdit: boolean;
   isOwner: boolean;
 }) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
@@ -34,6 +35,7 @@ export function ViewerClient(props: {
   const [rects, setRects] = useState<Record<string, Rect>>({});
   const [commenting, setCommenting] = useState(false);
   const [draft, setDraft] = useState<{ anchor: Anchor } | null>(null);
+  const [sel, setSel] = useState<{ anchor: Anchor; rect: Rect } | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [open, setOpen] = useState(true);
 
@@ -78,6 +80,8 @@ export function ViewerClient(props: {
         setCommenting(false);
         setDraft({ anchor: d.anchor as Anchor });
         setOpen(true);
+      } else if (d.type === "selection") {
+        setSel((d.sel as { anchor: Anchor; rect: Rect } | null) ?? null);
       }
     }
     window.addEventListener("message", onMsg);
@@ -97,6 +101,14 @@ export function ViewerClient(props: {
     setCommenting(on);
     setDraft(null);
     post({ type: "commentMode", on });
+  }
+
+  function startDraftFromSelection() {
+    if (!sel) return;
+    setDraft({ anchor: sel.anchor });
+    setSel(null);
+    post({ type: "clearSelection" });
+    setOpen(true);
   }
 
   async function submitDraft(body: string) {
@@ -157,6 +169,11 @@ export function ViewerClient(props: {
           <button className="btn-ghost" onClick={() => setOpen((o) => !o)}>
             Comments {openCount > 0 ? `(${openCount})` : ""}
           </button>
+          {props.canEdit && (
+            <Link href={`/d/${props.slug}/edit`} className="btn-ghost">
+              Edit
+            </Link>
+          )}
           {props.isOwner && (
             <Link href={`/d/${props.slug}/manage`} className="btn-ghost">
               Manage
@@ -178,6 +195,16 @@ export function ViewerClient(props: {
             title={props.title ?? "doc"}
           />
           <div className="overlay">
+            {props.canComment && sel && (
+              <button
+                className="margin-add"
+                style={{ top: Math.max(4, sel.rect.y + sel.rect.h / 2 - 16) }}
+                onClick={startDraftFromSelection}
+                title="Comment on selection"
+              >
+                💬+
+              </button>
+            )}
             {roots
               .filter((c) => c.status !== "resolved")
               .map((c) => {
@@ -217,7 +244,7 @@ export function ViewerClient(props: {
             {roots.length === 0 && !draft && (
               <p className="muted small cmt-empty">
                 {props.canComment
-                  ? 'Click "+ Comment", then click an element in the doc.'
+                  ? 'Select text in the doc and hit the 💬+ button — or click "+ Comment", then click any element.'
                   : "No comments yet."}
               </p>
             )}

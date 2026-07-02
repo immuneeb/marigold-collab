@@ -83,6 +83,7 @@ export default async function ViewerPage({ params }: Params) {
       versionId={versionId}
       iframeSrc={iframeSrc}
       canComment={!!role && roleCan(role, "comment")}
+      canEdit={!!role && roleCan(role, "update")}
       isOwner={role === "owner"}
     />
   );

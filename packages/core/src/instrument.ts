@@ -1,7 +1,8 @@
 import { type HTMLElement, parse } from "node-html-parser";
 import { sha256Hex } from "./hash";
 
-const AGENT_TAG = '<script src="/__mg/agent.js" data-mg-agent></script>';
+// ?v= busts the 1h browser cache on the agent when its protocol changes.
+const AGENT_TAG = '<script src="/__mg/agent.js?v=2" data-mg-agent></script>';
 const SKIP = new Set([
   "script",
   "style",

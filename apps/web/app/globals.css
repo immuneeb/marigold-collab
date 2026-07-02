@@ -307,6 +307,60 @@ textarea {
 .pin:hover {
   background: var(--accent-soft);
 }
+.margin-add {
+  position: absolute;
+  right: 10px;
+  pointer-events: auto;
+  padding: 5px 10px;
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: 16px;
+  border: 1px solid var(--marigold);
+  color: var(--marigold-dark);
+  background: #fff;
+  box-shadow: 0 2px 8px rgba(28, 25, 23, 0.2);
+  cursor: pointer;
+  z-index: 5;
+}
+.margin-add:hover {
+  background: var(--accent-soft);
+}
+
+/* edit page */
+.edit-pane {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+}
+.edit-pane + .edit-pane {
+  border-left: 1px solid var(--line);
+}
+.edit-source {
+  flex: 1;
+  border: 0;
+  border-radius: 0;
+  resize: none;
+  padding: 16px;
+  font:
+    13px/1.6 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+  background: #fffefb;
+}
+.edit-source:focus {
+  outline: none;
+}
+.edit-preview {
+  flex: 1;
+  border: 0;
+  background: #fff;
+}
+.edit-error {
+  padding: 8px 16px;
+  margin: 0;
+  border-bottom: 1px solid var(--line);
+}
 
 /* comment sidebar */
 .cmt-sidebar {
