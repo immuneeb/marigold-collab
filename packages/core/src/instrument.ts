@@ -1,8 +1,14 @@
 import { type HTMLElement, parse } from "node-html-parser";
 import { sha256Hex } from "./hash";
 
-// ?v= busts the 1h browser cache on the agent when its protocol changes.
-const AGENT_TAG = '<script src="/__mg/agent.js?v=5" data-mg-agent></script>';
+// Bump when the agent's protocol/behavior changes. The render origin rewrites
+// every served doc's tag to AGENT_SRC, so a bump busts the browser cache for
+// ALL docs (existing ones included) without needing a re-save.
+export const AGENT_VERSION = 6;
+export const AGENT_SRC = `/__mg/agent.js?v=${AGENT_VERSION}`;
+const AGENT_TAG = `<script src="${AGENT_SRC}" data-mg-agent></script>`;
+// Matches any prior agent tag src so serve-time rewrite can normalize it.
+export const AGENT_SRC_RE = /\/__mg\/agent\.js(\?v=\d+)?/g;
 const SKIP = new Set([
   "script",
   "style",

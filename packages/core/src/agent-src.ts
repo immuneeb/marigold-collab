@@ -164,7 +164,22 @@ export const ANCHOR_AGENT_JS = String.raw`(function () {
     if (selTimer) clearTimeout(selTimer);
     selTimer = setTimeout(reportSelection, 180);
   });
-  document.addEventListener("mouseup", function () { setTimeout(reportSelection, 0); });
+  // Track drag state so hover controls never mutate the DOM mid-selection
+  // (that can collapse the native selection and kill the comment flow).
+  var selecting = false;
+  function hasSelection() {
+    var s = window.getSelection();
+    return !!(s && !s.isCollapsed && s.rangeCount);
+  }
+  document.addEventListener("mousedown", function (e) {
+    if (controls.contains(e.target)) return;
+    selecting = true;
+    hideControls();
+  });
+  document.addEventListener("mouseup", function () {
+    selecting = false;
+    setTimeout(reportSelection, 0);
+  });
 
   // ── in-place editing: double-click → contentEditable, blur = auto-save ──
   var editingEl = null, editingOrig = "";
@@ -184,6 +199,10 @@ export const ANCHOR_AGENT_JS = String.raw`(function () {
     if (editingEl === el) return;
     if (editingEl) endEdit(true);
     hideControls();
+    // Entering edit clears any pending comment button from the word-select that
+    // a double-click produces.
+    lastSelKey = "";
+    send({ type: "selection", sel: null });
     editingEl = el; editingOrig = el.innerHTML;
     el.contentEditable = "true";
     el.style.outline = "2px solid #e8870f"; el.style.outlineOffset = "2px";
@@ -279,7 +298,12 @@ export const ANCHOR_AGENT_JS = String.raw`(function () {
     controls.style.top = Math.max(4, r.top - 30) + "px";
   }
   document.addEventListener("mousemove", function (e) {
-    if (!editEnabled || commentMode || editingEl) { if (controls.style.display !== "none") hideControls(); return; }
+    // Suppressed while editing, in comment mode, mid-drag, or when text is
+    // selected — element controls must never fight text selection / commenting.
+    if (!editEnabled || commentMode || editingEl || selecting || hasSelection()) {
+      if (controls.style.display !== "none") hideControls();
+      return;
+    }
     if (controls.contains(e.target)) return;
     var el = nearestMg(e.target);
     if (!el || el === document.body) { hideControls(); return; }
