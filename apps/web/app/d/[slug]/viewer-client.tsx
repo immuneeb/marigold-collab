@@ -38,6 +38,9 @@ export function ViewerClient(props: {
   const [sel, setSel] = useState<{ anchor: Anchor; rect: Rect } | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [open, setOpen] = useState(true);
+  const [pendingEdits, setPendingEdits] = useState<Record<string, string>>({});
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const roots = useMemo(
     () => comments.filter((c) => !c.parentId),
@@ -74,19 +77,25 @@ export function ViewerClient(props: {
       if (e.source !== iframeRef.current?.contentWindow) return;
       const d = e.data as { __mg?: number; type?: string } & Record<string, unknown>;
       if (!d || d.__mg !== 1) return;
-      if (d.type === "ready") post({ type: "track", ids: trackedIds });
-      else if (d.type === "rects") setRects((d.rects as Record<string, Rect>) ?? {});
+      if (d.type === "ready") {
+        post({ type: "track", ids: trackedIds });
+        post({ type: "editable", on: props.canEdit });
+      } else if (d.type === "rects") setRects((d.rects as Record<string, Rect>) ?? {});
       else if (d.type === "placed") {
         setCommenting(false);
         setDraft({ anchor: d.anchor as Anchor });
         setOpen(true);
       } else if (d.type === "selection") {
         setSel((d.sel as { anchor: Anchor; rect: Rect } | null) ?? null);
+      } else if (d.type === "edited") {
+        const id = String(d.id ?? "");
+        const html = String(d.html ?? "");
+        if (id) setPendingEdits((p) => ({ ...p, [id]: html }));
       }
     }
     window.addEventListener("message", onMsg);
     return () => window.removeEventListener("message", onMsg);
-  }, [post, trackedIds]);
+  }, [post, trackedIds, props.canEdit]);
 
   useEffect(() => {
     refresh();
@@ -101,6 +110,34 @@ export function ViewerClient(props: {
     setCommenting(on);
     setDraft(null);
     post({ type: "commentMode", on });
+  }
+
+  async function saveEdits() {
+    const edits = Object.entries(pendingEdits).map(([marigoldId, html]) => ({
+      marigoldId,
+      html,
+    }));
+    if (edits.length === 0) return;
+    setSaving(true);
+    setSaveError(null);
+    const res = await fetch(`/api/docs/${props.docId}/inline-edit`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ versionId: props.versionId, edits }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setSaving(false);
+      setSaveError(data.message ?? data.error ?? "Save failed");
+      return;
+    }
+    // Fresh render token + re-anchored comments for the new version.
+    window.location.reload();
+  }
+
+  function discardEdits() {
+    // Simplest correct reset: reload the served (unedited) version.
+    window.location.reload();
   }
 
   function startDraftFromSelection() {
@@ -170,8 +207,12 @@ export function ViewerClient(props: {
             Comments {openCount > 0 ? `(${openCount})` : ""}
           </button>
           {props.canEdit && (
-            <Link href={`/d/${props.slug}/edit`} className="btn-ghost">
-              Edit
+            <Link
+              href={`/d/${props.slug}/edit`}
+              className="btn-ghost"
+              title="Edit the HTML source"
+            >
+              Source
             </Link>
           )}
           {props.isOwner && (
@@ -184,6 +225,28 @@ export function ViewerClient(props: {
           </Link>
         </div>
       </header>
+
+      {Object.keys(pendingEdits).length > 0 && (
+        <div className="savebar">
+          <span>
+            {Object.keys(pendingEdits).length} unsaved edit
+            {Object.keys(pendingEdits).length > 1 ? "s" : ""}
+            {saveError && <span className="error"> — {saveError}</span>}
+          </span>
+          <span className="savebar-actions">
+            <button
+              className="btn btn-inline"
+              disabled={saving}
+              onClick={saveEdits}
+            >
+              {saving ? "Saving…" : "Save"}
+            </button>
+            <button className="btn-ghost" disabled={saving} onClick={discardEdits}>
+              Discard
+            </button>
+          </span>
+        </div>
+      )}
 
       <div className="viewer-body">
         <div className="doc-pane">
@@ -244,7 +307,7 @@ export function ViewerClient(props: {
             {roots.length === 0 && !draft && (
               <p className="muted small cmt-empty">
                 {props.canComment
-                  ? 'Select text in the doc and hit the 💬+ button — or click "+ Comment", then click any element.'
+                  ? `Select text and hit the 💬+ button to comment.${props.canEdit ? " Double-click any text to edit it in place." : ""}`
                   : "No comments yet."}
               </p>
             )}

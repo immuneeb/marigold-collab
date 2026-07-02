@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  applyInlineEdits,
   deinstrumentHtml,
   instrumentHtml,
   resolveAnchor,
@@ -57,5 +58,29 @@ describe("instrument", () => {
         textQuote: { exact: "does-not-exist" },
       }),
     ).toBeNull();
+  });
+
+  it("applyInlineEdits: replaces element content, output stays clean", () => {
+    const inst = instrumentHtml(html);
+    const h1 = idOf(inst, "h1");
+    const out = applyInlineEdits(html, [
+      { marigoldId: h1, html: "Edited <b>title</b>" },
+    ]);
+    expect(out).toContain("Edited <b>title</b>");
+    expect(out).not.toContain("data-marigold-id"); // saved source is clean
+    expect(out).not.toContain("__mg/agent.js");
+    // unchanged structure → same id on re-instrumentation (comments re-anchor)
+    expect(idOf(instrumentHtml(out), "h1")).toBe(h1);
+  });
+
+  it("applyInlineEdits: rejects unknown/invalid ids", () => {
+    expect(() =>
+      applyInlineEdits(html, [{ marigoldId: "mg-0000000000", html: "x" }]),
+    ).toThrow(/no edits/);
+    expect(() =>
+      applyInlineEdits(html, [
+        { marigoldId: '"] , body { }', html: "x" }, // injection attempt
+      ]),
+    ).toThrow(/no edits/);
   });
 });

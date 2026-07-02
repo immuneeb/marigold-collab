@@ -1,5 +1,11 @@
 import { eq } from "drizzle-orm";
-import { authorize, config, renderOriginFor, signRenderToken } from "@marigold/core";
+import {
+  authorize,
+  config,
+  renderOriginFor,
+  roleCan,
+  signRenderToken,
+} from "@marigold/core";
 import { db, docs } from "@marigold/db";
 import { currentActor } from "@/lib/actor";
 import { json } from "@/lib/http";
@@ -23,9 +29,9 @@ export async function POST(_req: Request, { params }: Params) {
   if (!doc) return json(404, { error: "not_found" });
   if (doc.quarantined) return json(403, { error: "quarantined" });
 
-  // Owners preview `latest`; everyone else sees `published`.
+  // Update-capable roles preview `latest`; read-only roles see `published`.
   const versionId =
-    role === "owner"
+    role && roleCan(role, "update")
       ? (doc.latestVersionId ?? doc.publishedVersionId)
       : doc.publishedVersionId;
   if (!versionId) return json(404, { error: "not_published" });

@@ -2,7 +2,7 @@ import { type HTMLElement, parse } from "node-html-parser";
 import { sha256Hex } from "./hash";
 
 // ?v= busts the 1h browser cache on the agent when its protocol changes.
-const AGENT_TAG = '<script src="/__mg/agent.js?v=2" data-mg-agent></script>';
+const AGENT_TAG = '<script src="/__mg/agent.js?v=3" data-mg-agent></script>';
 const SKIP = new Set([
   "script",
   "style",
@@ -71,6 +71,35 @@ export function deinstrumentHtml(html: string): string {
     el.removeAttribute("data-marigold-id");
   for (const s of root.querySelectorAll("script[data-mg-agent]")) s.remove();
   return root.toString();
+}
+
+export interface InlineEdit {
+  marigoldId: string;
+  html: string;
+}
+
+const MGID_RE = /^mg-[0-9a-f]{10}$/;
+
+/**
+ * Apply in-place (double-click) edits to doc source. The stored HTML is first
+ * instrumented (idempotent + deterministic, so ids match exactly what the
+ * viewer's agent saw — including legacy docs instrumented at serve time), each
+ * edited element's content is replaced, then instrumentation is stripped so the
+ * saved source stays clean. Re-ingest re-derives the same ids for unchanged
+ * structure, which is what lets comments re-anchor across human edits.
+ */
+export function applyInlineEdits(html: string, edits: InlineEdit[]): string {
+  const root = parse(instrumentHtml(html), { comment: true });
+  let applied = 0;
+  for (const e of edits) {
+    if (!MGID_RE.test(e.marigoldId)) continue;
+    const el = root.querySelector(`[data-marigold-id="${e.marigoldId}"]`);
+    if (!el) continue;
+    el.set_content(e.html);
+    applied++;
+  }
+  if (applied === 0) throw new Error("no edits could be applied");
+  return deinstrumentHtml(root.toString());
 }
 
 /**

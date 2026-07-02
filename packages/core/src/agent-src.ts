@@ -89,6 +89,7 @@ export const ANCHOR_AGENT_JS = String.raw`(function () {
   var selTimer = null;
   var lastSelKey = "";
   function reportSelection() {
+    if (editingEl) return; // no comment button while typing in an edit
     var s = window.getSelection();
     if (!s || s.isCollapsed || s.rangeCount === 0) {
       if (lastSelKey) { lastSelKey = ""; send({ type: "selection", sel: null }); }
@@ -115,6 +116,39 @@ export const ANCHOR_AGENT_JS = String.raw`(function () {
   });
   document.addEventListener("mouseup", function () { setTimeout(reportSelection, 0); });
 
+  // ── in-place editing: double-click any element → contentEditable ──
+  var editEnabled = false, editingEl = null, editingOrig = "";
+  function onEditBlur() { endEdit(true); }
+  function endEdit(save) {
+    if (!editingEl) return;
+    var el = editingEl, orig = editingOrig;
+    editingEl = null; editingOrig = "";
+    el.removeEventListener("blur", onEditBlur);
+    el.contentEditable = "false";
+    el.style.outline = ""; el.style.outlineOffset = "";
+    if (!save) { el.innerHTML = orig; send({ type: "editCancel" }); }
+    else if (el.innerHTML !== orig) {
+      send({ type: "edited", id: el.getAttribute("data-marigold-id"), html: el.innerHTML });
+    }
+    schedule();
+  }
+  document.addEventListener("dblclick", function (e) {
+    if (!editEnabled || commentMode) return;
+    var el = nearestMg(e.target);
+    if (!el || el === editingEl) return;
+    if (editingEl) endEdit(true);
+    e.preventDefault();
+    editingEl = el; editingOrig = el.innerHTML;
+    el.contentEditable = "true";
+    el.style.outline = "2px solid #e8870f"; el.style.outlineOffset = "2px";
+    el.addEventListener("blur", onEditBlur);
+    el.focus();
+    send({ type: "editStart", id: el.getAttribute("data-marigold-id") });
+  }, true);
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape" && editingEl) { e.preventDefault(); endEdit(false); }
+  });
+
   // ── explicit comment mode: click any element ──
   document.addEventListener("click", function (e) {
     if (!commentMode) return;
@@ -130,6 +164,7 @@ export const ANCHOR_AGENT_JS = String.raw`(function () {
     if (d.type === "track") { tracked = d.ids || []; reportRects(); }
     else if (d.type === "getRects") { reportRects(); }
     else if (d.type === "commentMode") { commentMode = !!d.on; document.documentElement.style.cursor = commentMode ? "crosshair" : ""; }
+    else if (d.type === "editable") { editEnabled = !!d.on; if (!d.on) endEdit(false); }
     else if (d.type === "clearSelection") { try { window.getSelection().removeAllRanges(); } catch (err) {} lastSelKey = ""; }
     else if (d.type === "scrollTo") { var el = elFor(d.id); if (el) el.scrollIntoView({ block: "center", behavior: "smooth" }); }
   });

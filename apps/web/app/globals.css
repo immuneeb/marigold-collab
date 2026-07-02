@@ -326,6 +326,26 @@ textarea {
   background: var(--accent-soft);
 }
 
+/* in-place editing save bar */
+.savebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 14px;
+  background: var(--accent-soft);
+  border-bottom: 1px solid var(--marigold);
+  font-size: 13.5px;
+}
+.savebar-actions {
+  display: flex;
+  gap: 8px;
+}
+.savebar .error {
+  display: inline;
+  color: #b91c1c;
+}
+
 /* edit page */
 .edit-pane {
   flex: 1;

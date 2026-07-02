@@ -59,8 +59,10 @@ export default async function ViewerPage({ params }: Params) {
     );
   }
 
+  // Anyone who can edit works against `latest` (their edits apply to what they
+  // see); read-only roles see `published`.
   const versionId =
-    role === "owner"
+    role && roleCan(role, "update")
       ? (doc.latestVersionId ?? doc.publishedVersionId)
       : doc.publishedVersionId;
   if (!versionId) {
