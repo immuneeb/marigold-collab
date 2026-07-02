@@ -17,7 +17,9 @@ export async function GET(req: Request, { params }: Params) {
   const { ok } = await authorize(id, actor, "view");
   if (!ok) return json(actor.userId ? 403 : 401, { error: "forbidden" });
   const status = new URL(req.url).searchParams.get("status") ?? undefined;
-  return json(200, { comments: await listComments(id, status || undefined) });
+  return json(200, {
+    comments: await listComments(id, { status: status || undefined }),
+  });
 }
 
 export async function POST(req: Request, { params }: Params) {

@@ -1,8 +1,9 @@
 import { createMcpHandler, withMcpAuth } from "mcp-handler";
 import { z } from "zod";
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq, ne, sql } from "drizzle-orm";
 import {
   authorize,
+  buildAddressFeedbackPrompt,
   buildAnalyzePrompt,
   buildLearnPrompt,
   buildStartAnalysisText,
@@ -14,11 +15,12 @@ import {
   renderOriginFor,
   updateDoc,
 } from "@marigold/core";
-import { db, docs } from "@marigold/db";
+import { comments, db, docs } from "@marigold/db";
 import { actorForUserId } from "@/lib/actor";
 import {
   getComment,
   listComments,
+  replyToComment,
   setCommentStatus,
 } from "@/lib/comments";
 import { sendInvite } from "@/lib/invite";
@@ -104,6 +106,29 @@ const baseHandler = createMcpHandler(
           {
             role: "user" as const,
             content: { type: "text" as const, text: buildLearnPrompt(topic, audience) },
+          },
+        ],
+      }),
+    );
+
+    server.registerPrompt(
+      "address_feedback",
+      {
+        title: "Marigold: address AI-assigned comments",
+        description:
+          "Work through the comments editors have assigned to AI (✨): fetch them, make the edits, reply with what changed, and resolve.",
+        argsSchema: {
+          doc: z
+            .string()
+            .optional()
+            .describe("A specific doc (title, slug, or id); omit to sweep all docs"),
+        },
+      },
+      ({ doc }) => ({
+        messages: [
+          {
+            role: "user" as const,
+            content: { type: "text" as const, text: buildAddressFeedbackPrompt(doc) },
           },
         ],
       }),
@@ -196,7 +221,8 @@ const baseHandler = createMcpHandler(
       "list_docs",
       {
         title: "List docs",
-        description: "List the docs you own.",
+        description:
+          "List the docs you own. openAiComments counts unresolved comments editors have assigned to AI — if it's > 0, that doc has feedback waiting for you (get_comments with assignedToAi: true).",
         inputSchema: {},
       },
       async (_args, extra: ToolExtra) => {
@@ -213,7 +239,26 @@ const baseHandler = createMcpHandler(
           .from(docs)
           .where(eq(docs.ownerId, userId))
           .orderBy(desc(docs.createdAt));
-        return ok({ docs: rows.map((r) => ({ ...r, url: `/d/${r.slug}` })) });
+        const counts = await db
+          .select({ docId: comments.docId, n: sql<number>`count(*)::int` })
+          .from(comments)
+          .innerJoin(docs, eq(comments.docId, docs.id))
+          .where(
+            and(
+              eq(docs.ownerId, userId),
+              eq(comments.assignedToAi, true),
+              ne(comments.status, "resolved"),
+            ),
+          )
+          .groupBy(comments.docId);
+        const aiByDoc = new Map(counts.map((c) => [c.docId, c.n]));
+        return ok({
+          docs: rows.map((r) => ({
+            ...r,
+            url: `/d/${r.slug}`,
+            openAiComments: aiByDoc.get(r.docId) ?? 0,
+          })),
+        });
       },
     );
 
@@ -305,20 +350,24 @@ const baseHandler = createMcpHandler(
       {
         title: "Get comments",
         description:
-          "Read human feedback on a doc. Each comment includes the element text it's anchored to, so you can revise the HTML and call update_doc — comments re-anchor automatically.",
+          "Read human feedback on a doc. Each comment includes the element text it's anchored to, so you can revise the HTML and call update_doc — comments re-anchor automatically. Pass assignedToAi: true to get just the comments editors queued for you (✨) — address those, reply_to_comment with what changed, then resolve_comment.",
         inputSchema: {
           docId: z.string(),
           status: z.enum(["open", "resolved", "orphaned"]).optional(),
+          assignedToAi: z
+            .boolean()
+            .optional()
+            .describe("true = only comments assigned to AI"),
         },
       },
-      async ({ docId, status }, extra: ToolExtra) => {
+      async ({ docId, status, assignedToAi }, extra: ToolExtra) => {
         const userId = userIdOf(extra);
         if (!userId) return fail("unauthenticated");
         const actor = await actorForUserId(userId);
         const { ok: allowed } = await authorize(docId, actor, "view");
         if (!allowed) return fail("not authorized to view this doc");
 
-        const rows = await listComments(docId, status);
+        const rows = await listComments(docId, { status, assignedToAi });
         const list = rows.map((c) => {
           const a = (c.anchor ?? {}) as { textQuote?: { exact?: string } };
           return {
@@ -328,6 +377,8 @@ const baseHandler = createMcpHandler(
             author: c.authorName ?? "someone",
             body: c.body,
             status: c.status,
+            assignedToAi: c.assignedToAi,
+            byAi: c.viaAssistant,
             anchoredText: a.textQuote?.exact ?? null,
           };
         });
@@ -336,10 +387,40 @@ const baseHandler = createMcpHandler(
     );
 
     server.registerTool(
+      "reply_to_comment",
+      {
+        title: "Reply to comment",
+        description:
+          "Reply to a comment thread. Use it to say what you changed (or why you disagree) before resolving — the reply is badged as AI-written in the doc.",
+        inputSchema: { commentId: z.string(), body: z.string() },
+      },
+      async ({ commentId, body }, extra: ToolExtra) => {
+        const userId = userIdOf(extra);
+        if (!userId) return fail("unauthenticated");
+        const c = await getComment(commentId);
+        if (!c) return fail("comment not found");
+        const actor = await actorForUserId(userId);
+        const { ok: allowed } = await authorize(c.docId, actor, "comment");
+        if (!allowed) return fail("not authorized to comment on this doc");
+        // Replies always attach to the thread root.
+        const threadId = c.parentId ?? c.id;
+        const r = await replyToComment({
+          parentId: threadId,
+          authorId: userId,
+          body: String(body).slice(0, 4000),
+          viaAssistant: true,
+        });
+        if (!r) return fail("comment not found");
+        return ok({ id: r.id, threadId });
+      },
+    );
+
+    server.registerTool(
       "resolve_comment",
       {
         title: "Resolve comment",
-        description: "Mark a comment thread resolved once you've addressed it.",
+        description:
+          "Mark a comment thread resolved once you've addressed it. If it was assigned to AI, reply_to_comment first so the humans see what changed.",
         inputSchema: { commentId: z.string() },
       },
       async ({ commentId }, extra: ToolExtra) => {

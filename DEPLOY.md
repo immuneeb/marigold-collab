@@ -51,8 +51,16 @@ build `pnpm build`.
 
 Vercel dashboard → **Storage → Create Database → Postgres (Neon)**. Then
 **Connect** that database to **both** projects (it injects `DATABASE_URL` /
-`POSTGRES_URL` into each). Apply the schema from your machine using the database
-connection string (copy it from the Storage tab):
+`POSTGRES_URL` into each).
+
+Migrations apply automatically during the **app** project's Vercel build
+(`apps/web` build script runs `pnpm --filter @marigold/db migrate` when
+`$VERCEL=1`, before `next build`) — so a failed migration fails the deploy and
+the old version keeps serving. Note the Neon integration marks its env vars
+*sensitive*, so `vercel env pull` returns them empty; running the migration
+inside the build is also the only non-dashboard way to reach the connection
+string. To apply the schema manually instead (first setup, or debugging), copy
+the connection string from the Storage tab:
 
 ```sh
 DATABASE_URL='postgres://…?sslmode=require' pnpm --filter @marigold/db migrate

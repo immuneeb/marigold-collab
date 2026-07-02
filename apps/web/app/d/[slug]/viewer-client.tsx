@@ -16,6 +16,8 @@ interface Comment {
   body: string;
   anchor: Anchor | null;
   status: string;
+  assignedToAi: boolean;
+  viaAssistant: boolean;
   createdAt: string;
 }
 type Rect = { x: number; y: number; w: number; h: number };
@@ -223,6 +225,14 @@ export function ViewerClient(props: {
     });
     await refresh();
   }
+  async function setAssignAi(id: string, assignToAi: boolean) {
+    await fetch(`/api/comments/${id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ assignToAi }),
+    });
+    await refresh();
+  }
 
   const openCount = roots.filter((c) => c.status === "open").length;
 
@@ -336,7 +346,7 @@ export function ViewerClient(props: {
                     }}
                     title={c.body}
                   >
-                    💬
+                    {c.assignedToAi ? "✨" : "💬"}
                   </button>
                 );
               })}
@@ -375,10 +385,12 @@ export function ViewerClient(props: {
                     post({ type: "scrollTo", id: c.anchor.marigoldId });
                 }}
                 canComment={props.canComment}
+                canEdit={props.canEdit}
                 onReply={(b) => sendReply(c.id, b)}
                 onResolve={() =>
                   setStatus(c.id, c.status === "resolved" ? "open" : "resolved")
                 }
+                onAssignAi={() => setAssignAi(c.id, !c.assignedToAi)}
               />
             ))}
           </aside>
@@ -423,9 +435,11 @@ function Thread(props: {
   replies: Comment[];
   selected: boolean;
   canComment: boolean;
+  canEdit: boolean;
   onSelect: () => void;
   onReply: (body: string) => void;
   onResolve: () => void;
+  onAssignAi: () => void;
 }) {
   const [reply, setReply] = useState("");
   const { root } = props;
@@ -439,6 +453,11 @@ function Thread(props: {
         <div className="cmt-anchor">
           “{root.anchor.textQuote.exact.slice(0, 80)}”
           {orphaned && <span className="orphan"> · not on this version</span>}
+        </div>
+      )}
+      {root.assignedToAi && root.status !== "resolved" && (
+        <div className="ai-badge" title="An AI agent will address this comment">
+          ✨ Assigned to AI
         </div>
       )}
       <CommentBody c={root} />
@@ -458,6 +477,22 @@ function Thread(props: {
               }
             }}
           />
+          {props.canEdit && root.status !== "resolved" && (
+            <button
+              className="btn-ghost"
+              title={
+                root.assignedToAi
+                  ? "Remove from the AI queue"
+                  : "Queue this for the doc's AI agent to address"
+              }
+              onClick={(e) => {
+                e.stopPropagation();
+                props.onAssignAi();
+              }}
+            >
+              {root.assignedToAi ? "✨ Unassign" : "✨ AI"}
+            </button>
+          )}
           <button
             className="btn-ghost"
             onClick={(e) => {
@@ -477,6 +512,11 @@ function CommentBody({ c, reply }: { c: Comment; reply?: boolean }) {
   return (
     <div className={reply ? "cmt-body reply" : "cmt-body"}>
       <span className="cmt-author">{c.authorName ?? "Someone"}</span>
+      {c.viaAssistant && (
+        <span className="ai-chip" title="Written by an AI agent via MCP">
+          AI
+        </span>
+      )}
       <span className="cmt-text">{c.body}</span>
     </div>
   );

@@ -150,12 +150,25 @@ export const comments = pgTable(
     body: text("body").notNull(),
     anchor: jsonb("anchor").notNull(), // composite selector (spec §8.1)
     status: text("status").notNull().default("open"), // 'open' | 'resolved' | 'orphaned'
+    // "Assign to AI": editors flag a thread for the owner's AI agent to address
+    // via MCP. Orthogonal to status — a comment can be open AND assigned.
+    assignedToAi: boolean("assigned_to_ai").notNull().default(false),
+    aiAssignedAt: timestamp("ai_assigned_at", { withTimezone: true }),
+    aiAssignedBy: text("ai_assigned_by").references(() => users.id),
+    // Authored through the MCP surface (an AI acting for a user) — lets the UI
+    // badge agent replies without a separate "AI" principal in `users`.
+    viaAssistant: boolean("via_assistant").notNull().default(false),
     createdAt: createdAt(),
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
   },
-  (t) => [index("comments_doc_status_idx").on(t.docId, t.status)],
+  (t) => [
+    index("comments_doc_status_idx").on(t.docId, t.status),
+    index("comments_ai_assigned_idx")
+      .on(t.docId)
+      .where(sql`${t.assignedToAi}`),
+  ],
 );
 
 // ─────────────────────────────────────────────────────────────────────────────

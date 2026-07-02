@@ -10,6 +10,8 @@ export interface CommentRow {
   body: string;
   anchor: unknown;
   status: string;
+  assignedToAi: boolean;
+  viaAssistant: boolean;
   createdAt: Date;
 }
 
@@ -53,6 +55,7 @@ export async function replyToComment(opts: {
   parentId: string;
   authorId: string;
   body: string;
+  viaAssistant?: boolean;
 }): Promise<{ id: string; docId: string } | null> {
   const parent = (
     await db
@@ -72,17 +75,19 @@ export async function replyToComment(opts: {
     body: opts.body,
     anchor: parent.anchor,
     status: "open",
+    viaAssistant: opts.viaAssistant ?? false,
   });
   return { id, docId: parent.docId };
 }
 
 export async function listComments(
   docId: string,
-  status?: string,
+  filter?: { status?: string; assignedToAi?: boolean },
 ): Promise<CommentRow[]> {
-  const where = status
-    ? and(eq(comments.docId, docId), eq(comments.status, status))
-    : eq(comments.docId, docId);
+  const conds = [eq(comments.docId, docId)];
+  if (filter?.status) conds.push(eq(comments.status, filter.status));
+  if (filter?.assignedToAi !== undefined)
+    conds.push(eq(comments.assignedToAi, filter.assignedToAi));
   return db
     .select({
       id: comments.id,
@@ -93,11 +98,13 @@ export async function listComments(
       body: comments.body,
       anchor: comments.anchor,
       status: comments.status,
+      assignedToAi: comments.assignedToAi,
+      viaAssistant: comments.viaAssistant,
       createdAt: comments.createdAt,
     })
     .from(comments)
     .leftJoin(users, eq(comments.authorId, users.id))
-    .where(where)
+    .where(and(...conds))
     .orderBy(asc(comments.createdAt));
 }
 
@@ -111,6 +118,7 @@ export async function getComment(commentId: string) {
           authorId: comments.authorId,
           parentId: comments.parentId,
           status: comments.status,
+          assignedToAi: comments.assignedToAi,
         })
         .from(comments)
         .where(eq(comments.id, commentId))
@@ -126,6 +134,22 @@ export async function setCommentStatus(
   await db
     .update(comments)
     .set({ status, updatedAt: new Date() })
+    .where(eq(comments.id, commentId));
+}
+
+export async function setCommentAiAssignment(
+  commentId: string,
+  assigned: boolean,
+  byUserId: string | null,
+): Promise<void> {
+  await db
+    .update(comments)
+    .set({
+      assignedToAi: assigned,
+      aiAssignedAt: assigned ? new Date() : null,
+      aiAssignedBy: assigned ? byUserId : null,
+      updatedAt: new Date(),
+    })
     .where(eq(comments.id, commentId));
 }
 

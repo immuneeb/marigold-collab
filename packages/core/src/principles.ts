@@ -73,7 +73,8 @@ first response.
 5. **Publish** — when understanding stabilizes or the user wraps up, offer to
    publish a Marigold doc: the full visual treatment of what the conversation
    built. Then iterate through readers' comments (get_comments → revise →
-   update_doc → resolve_comment).`;
+   update_doc → reply_to_comment → resolve_comment). Editors can assign
+   comments to AI (✨) — those are yours to address when the user asks.`;
 
 export const DOC_GUIDE = `# Authoring Marigold docs
 
@@ -113,7 +114,13 @@ load-bearing diagrams, three reading depths.
 CSS/JS/SVG; images as data: URIs; external scripts, fonts, and images are
 blocked by CSP and fail silently. Keep DOM structure stable across updates so
 readers' comments re-anchor. After sharing, check get_comments, revise with
-update_doc, then resolve_comment.`;
+update_doc, then resolve_comment.
+
+3. Feedback loop: editors can assign comments to AI (✨). When the user asks
+to address comments or AI feedback: list_docs shows openAiComments per doc;
+get_comments with assignedToAi=true returns the queue; make the edits with
+update_doc, reply_to_comment with a one-line summary of the change, then
+resolve_comment. The address_feedback prompt runs this end to end.`;
 
 const DEFAULT_AUDIENCE = "a sharp generalist who does not know this domain's jargon";
 
@@ -141,6 +148,24 @@ export function buildLearnPrompt(topic: string, audience?: string): string {
     `Teach me the following topic the Marigold Way. Audience: ${audience ?? DEFAULT_AUDIENCE}.`,
     `Topic: ${topic}`,
   ].join("\n\n");
+}
+
+export function buildAddressFeedbackPrompt(doc?: string): string {
+  return `Address the comments assigned to AI on ${doc ? `the Marigold doc "${doc}"` : "my Marigold docs"}.
+
+1. ${doc ? "Find the doc (list_docs if you need its id)." : "Call list_docs and take every doc with openAiComments > 0."}
+2. For each doc: get_doc for the current HTML, then get_comments with
+   assignedToAi: true. Address the ones with status "open"; an "orphaned" one
+   lost its anchor after an edit — use its anchoredText to locate the passage.
+3. Make the edits the comments ask for. Use the research context that produced
+   this doc — verify claims rather than guessing. Keep the DOM structure
+   stable: edit content in place; don't reorder or re-nest sections.
+4. Save once per doc with update_doc.
+5. On each thread: reply_to_comment with one line on what you changed (or why
+   you disagree — never silently skip), then resolve_comment for the ones you
+   actually addressed.
+
+Work through every assigned comment before finishing.`;
 }
 
 export function buildStartAnalysisText(topic?: string, mode?: "analyze" | "learn"): string {
