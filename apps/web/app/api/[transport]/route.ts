@@ -3,10 +3,14 @@ import { z } from "zod";
 import { desc, eq } from "drizzle-orm";
 import {
   authorize,
+  buildAnalyzePrompt,
+  buildLearnPrompt,
+  buildStartAnalysisText,
   createDoc,
   deinstrumentHtml,
   getBlobStore,
   IngestError,
+  MARIGOLD_DIGEST,
   renderOriginFor,
   updateDoc,
 } from "@marigold/core";
@@ -54,12 +58,84 @@ async function currentHtmlOf(latestVersionId: string | null): Promise<string | n
 
 const baseHandler = createMcpHandler(
   (server) => {
+    // The Marigold Way — methodology surface. Prompts for clients that
+    // support them (Claude surfaces these as slash commands); the
+    // start_analysis tool for clients that only speak tools (ChatGPT).
+    server.registerPrompt(
+      "analyze",
+      {
+        title: "Marigold: analyze",
+        description:
+          "Analyze a concept, system, or decision the Marigold Way — first-principles decomposition, answer-first structure, load-bearing diagrams, three reading depths.",
+        argsSchema: {
+          topic: z.string().describe("The concept, system, question, or decision to analyze"),
+          audience: z
+            .string()
+            .optional()
+            .describe("Who this is for (default: a sharp generalist new to the domain)"),
+        },
+      },
+      ({ topic, audience }) => ({
+        messages: [
+          {
+            role: "user" as const,
+            content: { type: "text" as const, text: buildAnalyzePrompt(topic, audience) },
+          },
+        ],
+      }),
+    );
+
+    server.registerPrompt(
+      "learn",
+      {
+        title: "Marigold: learn",
+        description:
+          "Learn a topic the Marigold Way — same first-principles rigor, taught progressively: one new primitive at a time, in dependency order.",
+        argsSchema: {
+          topic: z.string().describe("The topic to learn"),
+          audience: z
+            .string()
+            .optional()
+            .describe("Who is learning (default: a sharp generalist new to the domain)"),
+        },
+      },
+      ({ topic, audience }) => ({
+        messages: [
+          {
+            role: "user" as const,
+            content: { type: "text" as const, text: buildLearnPrompt(topic, audience) },
+          },
+        ],
+      }),
+    );
+
+    server.registerTool(
+      "start_analysis",
+      {
+        title: "Start a Marigold analysis",
+        description:
+          'Load the Marigold Way — the methodology for analyzing or teaching a topic from first principles. Call this FIRST when the user asks Marigold to analyze, explain, or teach something (e.g. "marigold analyze X", "/marigold learn Y"), then follow the returned method for the rest of the conversation.',
+        inputSchema: {
+          topic: z.string().optional().describe("The topic to analyze or learn, if known"),
+          mode: z
+            .enum(["analyze", "learn"])
+            .optional()
+            .describe("analyze = first-principles breakdown; learn = progressive teaching"),
+        },
+      },
+      async ({ topic, mode }) => ({
+        content: [
+          { type: "text" as const, text: buildStartAnalysisText(topic, mode) },
+        ],
+      }),
+    );
+
     server.registerTool(
       "create_doc",
       {
         title: "Create doc",
         description:
-          "Create a new Marigold doc from generated HTML and return its URL.",
+          "Create a new Marigold doc from a self-contained HTML page and return its URL. Inline all CSS/JS/SVG and use data: URIs for images — external scripts, fonts, and images are blocked by CSP and fail silently. Lead with the core insight and carry the structure in a diagram (call start_analysis for the full authoring guide).",
         inputSchema: { title: z.string().optional(), html: z.string() },
       },
       async ({ title, html }, extra: ToolExtra) => {
@@ -86,7 +162,7 @@ const baseHandler = createMcpHandler(
       {
         title: "Update doc",
         description:
-          "Replace a doc's content in place (same URL). No-op if unchanged.",
+          "Replace a doc's content in place (same URL). No-op if unchanged. Keep the DOM structure stable — comments anchor to elements, so edit content in place; reordering or re-nesting sections orphans readers' comments.",
         inputSchema: {
           docId: z.string(),
           html: z.string(),
@@ -279,7 +355,11 @@ const baseHandler = createMcpHandler(
       },
     );
   },
-  {},
+  {
+    serverInfo: { name: "marigold", version: "1.0.0" },
+    // Injected into the client's context on connect (where supported).
+    instructions: MARIGOLD_DIGEST,
+  },
   { basePath: "/api" },
 );
 

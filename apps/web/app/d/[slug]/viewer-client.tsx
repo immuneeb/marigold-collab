@@ -38,8 +38,12 @@ export function ViewerClient(props: {
   const [sel, setSel] = useState<{ anchor: Anchor; rect: Rect } | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [open, setOpen] = useState(true);
-  const [pendingEdits, setPendingEdits] = useState<Record<string, string>>({});
-  const [saving, setSaving] = useState(false);
+  // Auto-save machinery: edits stream in from the agent, get queued, and flush
+  // serially; each save rolls a new version, so we chain versionId forward.
+  const versionIdRef = useRef(props.versionId);
+  const queueRef = useRef<Map<string, string>>(new Map());
+  const flushingRef = useRef(false);
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [saveError, setSaveError] = useState<string | null>(null);
 
   const roots = useMemo(
@@ -54,6 +58,13 @@ export function ViewerClient(props: {
   const post = useCallback((msg: Record<string, unknown>) => {
     iframeRef.current?.contentWindow?.postMessage({ __mg: 1, ...msg }, "*");
   }, []);
+
+  // Push config to the agent. Driven by BOTH the agent's `ready` and the
+  // iframe's onLoad — `ready` alone is racy (it can fire before our listener
+  // attaches, and would be lost forever), so onLoad is the reliable trigger.
+  const syncAgent = useCallback(() => {
+    post({ type: "editable", on: props.canEdit });
+  }, [post, props.canEdit]);
 
   const refresh = useCallback(async () => {
     const r = await fetch(`/api/docs/${props.docId}/comments`)
@@ -71,6 +82,47 @@ export function ViewerClient(props: {
     [roots],
   );
 
+  // Auto-save: drain the queue serially; each save rolls a new version and we
+  // chain versionId forward. On failure the batch is re-queued (newest wins)
+  // and we stop until the user retries — no hot retry loop.
+  const flushEdits = useCallback(async () => {
+    if (flushingRef.current || queueRef.current.size === 0) return;
+    flushingRef.current = true;
+    setSaveState("saving");
+    setSaveError(null);
+
+    const batch = [...queueRef.current].map(([marigoldId, html]) => ({
+      marigoldId,
+      html,
+    }));
+    queueRef.current.clear();
+    let failed = false;
+
+    try {
+      const res = await fetch(`/api/docs/${props.docId}/inline-edit`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ versionId: versionIdRef.current, edits: batch }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.message ?? data.error ?? "Save failed");
+      if (data.versionId) versionIdRef.current = data.versionId;
+      setSaveState("saved");
+      setTimeout(() => setSaveState((s) => (s === "saved" ? "idle" : s)), 2500);
+    } catch (e) {
+      failed = true;
+      for (const edit of batch) {
+        if (!queueRef.current.has(edit.marigoldId))
+          queueRef.current.set(edit.marigoldId, edit.html);
+      }
+      setSaveState("error");
+      setSaveError((e as Error).message);
+    } finally {
+      flushingRef.current = false;
+      if (!failed && queueRef.current.size > 0) void flushEdits();
+    }
+  }, [props.docId]);
+
   // postMessage from the agent — validate it's THIS iframe's window.
   useEffect(() => {
     function onMsg(e: MessageEvent) {
@@ -79,7 +131,7 @@ export function ViewerClient(props: {
       if (!d || d.__mg !== 1) return;
       if (d.type === "ready") {
         post({ type: "track", ids: trackedIds });
-        post({ type: "editable", on: props.canEdit });
+        syncAgent();
       } else if (d.type === "rects") setRects((d.rects as Record<string, Rect>) ?? {});
       else if (d.type === "placed") {
         setCommenting(false);
@@ -90,12 +142,32 @@ export function ViewerClient(props: {
       } else if (d.type === "edited") {
         const id = String(d.id ?? "");
         const html = String(d.html ?? "");
-        if (id) setPendingEdits((p) => ({ ...p, [id]: html }));
+        if (id) {
+          queueRef.current.set(id, html); // latest edit per target wins
+          void flushEdits();
+        }
       }
     }
     window.addEventListener("message", onMsg);
-    return () => window.removeEventListener("message", onMsg);
-  }, [post, trackedIds, props.canEdit]);
+
+    // The iframe is server-rendered, so it (and its agent) can finish loading
+    // BEFORE React hydrates and attaches this listener — the agent's `ready`
+    // and the iframe onLoad both race hydration and get lost. So after mount we
+    // proactively push config to the agent, retrying briefly in case the iframe
+    // is instead the slow one. Posts are idempotent.
+    syncAgent();
+    post({ type: "track", ids: trackedIds });
+    let tries = 0;
+    const iv = setInterval(() => {
+      syncAgent();
+      post({ type: "track", ids: trackedIds });
+      if (++tries >= 4) clearInterval(iv);
+    }, 250);
+    return () => {
+      window.removeEventListener("message", onMsg);
+      clearInterval(iv);
+    };
+  }, [post, trackedIds, props.canEdit, flushEdits, syncAgent]);
 
   useEffect(() => {
     refresh();
@@ -110,34 +182,6 @@ export function ViewerClient(props: {
     setCommenting(on);
     setDraft(null);
     post({ type: "commentMode", on });
-  }
-
-  async function saveEdits() {
-    const edits = Object.entries(pendingEdits).map(([marigoldId, html]) => ({
-      marigoldId,
-      html,
-    }));
-    if (edits.length === 0) return;
-    setSaving(true);
-    setSaveError(null);
-    const res = await fetch(`/api/docs/${props.docId}/inline-edit`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ versionId: props.versionId, edits }),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      setSaving(false);
-      setSaveError(data.message ?? data.error ?? "Save failed");
-      return;
-    }
-    // Fresh render token + re-anchored comments for the new version.
-    window.location.reload();
-  }
-
-  function discardEdits() {
-    // Simplest correct reset: reload the served (unedited) version.
-    window.location.reload();
   }
 
   function startDraftFromSelection() {
@@ -156,7 +200,7 @@ export function ViewerClient(props: {
       body: JSON.stringify({
         anchor: draft.anchor,
         body,
-        versionId: props.versionId,
+        versionId: versionIdRef.current,
       }),
     });
     setDraft(null);
@@ -195,6 +239,12 @@ export function ViewerClient(props: {
           </span>
         </div>
         <div className="viewer-right">
+          {saveState === "saving" && (
+            <span className="muted small savestate">Saving…</span>
+          )}
+          {saveState === "saved" && (
+            <span className="muted small savestate">All changes saved ✓</span>
+          )}
           {props.canComment && (
             <button
               className={commenting ? "btn-secondary btn-inline" : "btn-ghost"}
@@ -226,23 +276,18 @@ export function ViewerClient(props: {
         </div>
       </header>
 
-      {Object.keys(pendingEdits).length > 0 && (
+      {saveState === "error" && (
         <div className="savebar">
-          <span>
-            {Object.keys(pendingEdits).length} unsaved edit
-            {Object.keys(pendingEdits).length > 1 ? "s" : ""}
-            {saveError && <span className="error"> — {saveError}</span>}
-          </span>
+          <span className="error">Couldn&apos;t save: {saveError}</span>
           <span className="savebar-actions">
-            <button
-              className="btn btn-inline"
-              disabled={saving}
-              onClick={saveEdits}
-            >
-              {saving ? "Saving…" : "Save"}
+            <button className="btn btn-inline" onClick={() => void flushEdits()}>
+              Retry
             </button>
-            <button className="btn-ghost" disabled={saving} onClick={discardEdits}>
-              Discard
+            <button
+              className="btn-ghost"
+              onClick={() => window.location.reload()}
+            >
+              Reload
             </button>
           </span>
         </div>
@@ -256,6 +301,12 @@ export function ViewerClient(props: {
             sandbox="allow-scripts"
             src={props.iframeSrc}
             title={props.title ?? "doc"}
+            onLoad={() => {
+              // Bonus init trigger (unreliable for SSR'd iframes — the mount
+              // effect + agent ready-retries are the real handshake).
+              post({ type: "track", ids: trackedIds });
+              syncAgent();
+            }}
           />
           <div className="overlay">
             {props.canComment && sel && (
@@ -307,7 +358,7 @@ export function ViewerClient(props: {
             {roots.length === 0 && !draft && (
               <p className="muted small cmt-empty">
                 {props.canComment
-                  ? `Select text and hit the 💬+ button to comment.${props.canEdit ? " Double-click any text to edit it in place." : ""}`
+                  ? `Select text and hit the 💬+ button to comment.${props.canEdit ? " Double-click text to edit it — changes save automatically. Hover an element for move / duplicate / add / delete." : ""}`
                   : "No comments yet."}
               </p>
             )}

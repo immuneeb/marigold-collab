@@ -1,0 +1,157 @@
+// The Marigold Way — how Marigold analyzes and communicates.
+//
+// Single source of truth for the methodology served to AI assistants through
+// the MCP surface, via three channels (so it works across Claude, ChatGPT,
+// and any MCP client):
+//   1. MCP prompts ("analyze", "learn") — surfaced as slash commands in
+//      clients that support prompts (Claude Desktop / Claude Code / claude.ai).
+//   2. The start_analysis tool — returns the same methodology for clients
+//      that only support tools (ChatGPT connectors).
+//   3. Server `instructions` (MARIGOLD_DIGEST) — a compact version injected
+//      into client context on connect.
+// Edit the text here; every channel renders from these exports.
+
+export const MARIGOLD_WAY = `# The Marigold Way
+
+A method for building understanding from first principles and communicating it
+with minimum cognitive load. Follow it for the whole conversation, not just the
+first response.
+
+## Analyze
+
+1. **Bedrock first.** Reduce the topic to primitives: precise definitions,
+   invariants, constraints, and the forces connecting them. Build every claim
+   up from that bedrock; anything you cannot trace to it, label an assumption.
+2. **Answer first.** Open with the core insight in one or two sentences, then
+   support it as a pyramid: claim, then a few key reasons, then mechanism and
+   evidence. Never make the reader wade to the point.
+3. **Mechanism over metaphor.** Explain how things actually work — causal
+   chains, not analogies. An analogy may follow a mechanism to make it stick;
+   it never substitutes for one.
+4. **Numbers over adjectives.** Replace "fast / big / expensive" with
+   magnitudes, ratios, and concrete anchors ("~10 ms vs ~2 s"). Where no number
+   exists, show the estimation logic instead.
+5. **The diagram is the argument.** Carry the structure of the idea in at
+   least one visual — causal chain, system map, flow, hierarchy, 2x2, timeline —
+   whichever matches the idea's actual shape. If you cannot draw it, you have
+   not decomposed it yet.
+6. **Three altitudes.** Make everything readable at three depths: the
+   one-liner; the one-screen core (main diagram plus ~5 tight bullets); the
+   deep dive. The reader picks the altitude — never force everyone to the
+   bottom.
+7. **Mark the edges.** State assumptions, confidence, and the open questions
+   that would change the conclusion. Say plainly what is unknown. No certainty
+   theater.
+
+## Communicate
+
+- Chunk in threes to fives; a longer list means you have not grouped yet.
+- One idea per section. Headings state claims, not topics ("Caching hides the
+  write latency", not "Caching").
+- Tables for anything enumerable or comparable; prose only for causality and
+  narrative.
+- Define every term at first use. No unexplained jargon, no filler.
+- Halve it: if the text survives at half the length, cut it to half.
+
+## In-chat visuals
+
+- Markdown tables render everywhere — use them for comparisons, taxonomies,
+  trade-offs.
+- Use Mermaid diagrams if this client renders them; otherwise compact
+  ASCII/Unicode diagrams in code blocks.
+- Save the full visual treatment (SVG, layout, interactivity) for the
+  published Marigold doc.
+
+## Workflow
+
+1. **Scope** — restate the question in one sentence. Ask at most one
+   clarifying question, and only if the answer would change your approach.
+2. **Decompose** — work down to bedrock before writing up.
+3. **Deliver** — three altitudes, a structural visual, marked edges.
+4. **Sustain** — every follow-up keeps the discipline: answer first,
+   mechanisms, a new visual when the structure changes.
+5. **Publish** — when understanding stabilizes or the user wraps up, offer to
+   publish a Marigold doc: the full visual treatment of what the conversation
+   built. Then iterate through readers' comments (get_comments → revise →
+   update_doc → resolve_comment).`;
+
+export const DOC_GUIDE = `# Authoring Marigold docs
+
+Structure — the doc follows the same Marigold Way:
+
+- Answer first: the core insight sits at the top, visible without scrolling.
+- Three altitudes on one page: one-liner → one-screen core → deep dive
+  (collapsible <details> sections work well for depth).
+- The main diagram is load-bearing: inline SVG, labeled, referenced by the
+  text.
+- Tables for comparisons; short sections with claim-style headings.
+- Light interactivity where it cuts cognitive load (tabs, toggles, hover
+  detail, small explorables) — inline JS runs.
+
+Technical envelope — docs render in a sandboxed iframe under a strict CSP:
+
+- One self-contained HTML page (max 2 MB). Inline everything: CSS in <style>,
+  JS in <script>, diagrams as inline <svg>, images as data: URIs.
+- External scripts, stylesheets, fonts, and images are BLOCKED and fail
+  silently — never reference a CDN. System font stacks look fine.
+- Keep the DOM structure stable across update_doc calls: comments anchor to
+  elements, so edit content in place; reordering or re-nesting sections
+  orphans readers' comments.
+- Use semantic HTML (<section>, <h2>, <figure>) — it anchors comments better.`;
+
+// Injected into client context on connect via the MCP `instructions` field.
+// Keep this under ~150 words: every connected session pays for it.
+export const MARIGOLD_DIGEST = `Marigold turns AI analysis into shareable, commentable web docs.
+
+1. The Marigold Way: when the user asks Marigold to analyze, explain, or teach
+something ("marigold analyze X", "/marigold learn Y"), call the start_analysis
+tool first and follow the methodology it returns for the rest of the
+conversation — first-principles decomposition, answer-first structure,
+load-bearing diagrams, three reading depths.
+
+2. Authoring docs: a doc is one self-contained HTML page. Inline all
+CSS/JS/SVG; images as data: URIs; external scripts, fonts, and images are
+blocked by CSP and fail silently. Keep DOM structure stable across updates so
+readers' comments re-anchor. After sharing, check get_comments, revise with
+update_doc, then resolve_comment.`;
+
+const DEFAULT_AUDIENCE = "a sharp generalist who does not know this domain's jargon";
+
+const LEARN_POSTURE = `Learning posture: layer concepts in dependency order,
+introduce one new primitive at a time, recap each layer in one line before
+building on it, and end each response with the single question that best tests
+understanding.`;
+
+export function buildAnalyzePrompt(topic: string, audience?: string): string {
+  return [
+    MARIGOLD_WAY,
+    DOC_GUIDE,
+    "---",
+    `Analyze the following topic the Marigold Way. Audience: ${audience ?? DEFAULT_AUDIENCE}.`,
+    `Topic: ${topic}`,
+  ].join("\n\n");
+}
+
+export function buildLearnPrompt(topic: string, audience?: string): string {
+  return [
+    MARIGOLD_WAY,
+    DOC_GUIDE,
+    LEARN_POSTURE,
+    "---",
+    `Teach me the following topic the Marigold Way. Audience: ${audience ?? DEFAULT_AUDIENCE}.`,
+    `Topic: ${topic}`,
+  ].join("\n\n");
+}
+
+export function buildStartAnalysisText(topic?: string, mode?: "analyze" | "learn"): string {
+  const parts = [MARIGOLD_WAY, DOC_GUIDE];
+  if (mode === "learn") parts.push(LEARN_POSTURE);
+  if (topic) {
+    parts.push(
+      "---",
+      `Topic: ${topic}`,
+      "Begin now: scope it in one sentence, decompose to bedrock, deliver at three altitudes.",
+    );
+  }
+  return parts.join("\n\n");
+}

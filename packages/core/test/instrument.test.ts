@@ -73,6 +73,21 @@ describe("instrument", () => {
     expect(idOf(instrumentHtml(out), "h1")).toBe(h1);
   });
 
+  it("applyInlineEdits: __body__ replaces whole body content (reorders/inserts)", () => {
+    const src =
+      "<!doctype html><html><body><p>First para</p><h1>Document Title</h1></body></html>";
+    // Simulate an agent structural send: reordered body content with live ids.
+    const out = applyInlineEdits(src, [
+      {
+        marigoldId: "__body__",
+        html: '<h1 data-marigold-id="mg-aaaaaaaaaa">Document Title</h1><p>First para</p><p>Inserted!</p>',
+      },
+    ]);
+    expect(out.indexOf("Document Title")).toBeLessThan(out.indexOf("First para"));
+    expect(out).toContain("Inserted!");
+    expect(out).not.toContain("data-marigold-id"); // live ids stripped from source
+  });
+
   it("applyInlineEdits: rejects unknown/invalid ids", () => {
     expect(() =>
       applyInlineEdits(html, [{ marigoldId: "mg-0000000000", html: "x" }]),
