@@ -406,6 +406,30 @@ textarea {
 .cmt-empty {
   padding: 8px 4px;
 }
+.cmt-resolved {
+  margin-top: 10px;
+  border-top: 1px solid var(--line);
+  padding-top: 8px;
+}
+.cmt-resolved-toggle {
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  padding: 4px;
+  border-radius: 6px;
+}
+.cmt-resolved-toggle:hover {
+  background: var(--accent-soft);
+  color: var(--fg);
+}
+.cmt-resolved .cmt-thread {
+  margin-top: 8px;
+}
 .cmt-thread {
   border: 1px solid var(--line);
   border-radius: 10px;

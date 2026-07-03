@@ -40,6 +40,7 @@ export function ViewerClient(props: {
   const [sel, setSel] = useState<{ anchor: Anchor; rect: Rect } | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [open, setOpen] = useState(true);
+  const [showResolved, setShowResolved] = useState(false);
   // Auto-save machinery: edits stream in from the agent, get queued, and flush
   // serially; each save rolls a new version, so we chain versionId forward.
   const versionIdRef = useRef(props.versionId);
@@ -51,6 +52,14 @@ export function ViewerClient(props: {
   const roots = useMemo(
     () => comments.filter((c) => !c.parentId),
     [comments],
+  );
+  const openRoots = useMemo(
+    () => roots.filter((c) => c.status !== "resolved"),
+    [roots],
+  );
+  const resolvedRoots = useMemo(
+    () => roots.filter((c) => c.status === "resolved"),
+    [roots],
   );
   const repliesOf = useCallback(
     (id: string) => comments.filter((c) => c.parentId === id),
@@ -365,15 +374,15 @@ export function ViewerClient(props: {
               />
             )}
 
-            {roots.length === 0 && !draft && (
+            {openRoots.length === 0 && resolvedRoots.length === 0 && !draft && (
               <p className="muted small cmt-empty">
                 {props.canComment
-                  ? `Select text and hit the 💬+ button to comment.${props.canEdit ? " Double-click text to edit it — changes save automatically. Hover an element for move / duplicate / add / delete." : ""}`
+                  ? `Select text and hit the 💬+ button to comment.${props.canEdit ? " Click text to edit it — changes save automatically. Hover an element for move / duplicate / add / delete." : ""}`
                   : "No comments yet."}
               </p>
             )}
 
-            {roots.map((c) => (
+            {openRoots.map((c) => (
               <Thread
                 key={c.id}
                 root={c}
@@ -387,12 +396,40 @@ export function ViewerClient(props: {
                 canComment={props.canComment}
                 canEdit={props.canEdit}
                 onReply={(b) => sendReply(c.id, b)}
-                onResolve={() =>
-                  setStatus(c.id, c.status === "resolved" ? "open" : "resolved")
-                }
+                onResolve={() => setStatus(c.id, "resolved")}
                 onAssignAi={() => setAssignAi(c.id, !c.assignedToAi)}
               />
             ))}
+
+            {resolvedRoots.length > 0 && (
+              <div className="cmt-resolved">
+                <button
+                  className="cmt-resolved-toggle"
+                  onClick={() => setShowResolved((v) => !v)}
+                >
+                  {showResolved ? "▾" : "▸"} Resolved ({resolvedRoots.length})
+                </button>
+                {showResolved &&
+                  resolvedRoots.map((c) => (
+                    <Thread
+                      key={c.id}
+                      root={c}
+                      replies={repliesOf(c.id)}
+                      selected={selected === c.id}
+                      onSelect={() => {
+                        setSelected(c.id);
+                        if (c.anchor?.marigoldId)
+                          post({ type: "scrollTo", id: c.anchor.marigoldId });
+                      }}
+                      canComment={props.canComment}
+                      canEdit={props.canEdit}
+                      onReply={(b) => sendReply(c.id, b)}
+                      onResolve={() => setStatus(c.id, "open")}
+                      onAssignAi={() => setAssignAi(c.id, !c.assignedToAi)}
+                    />
+                  ))}
+              </div>
+            )}
           </aside>
         )}
       </div>

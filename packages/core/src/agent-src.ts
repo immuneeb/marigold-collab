@@ -195,12 +195,10 @@ export const ANCHOR_AGENT_JS = String.raw`(function () {
     else if (el.innerHTML !== orig) { sendEdit(el); }
     schedule();
   }
-  function beginEdit(el) {
+  function beginEdit(el, caret) {
     if (editingEl === el) return;
     if (editingEl) endEdit(true);
     hideControls();
-    // Entering edit clears any pending comment button from the word-select that
-    // a double-click produces.
     lastSelKey = "";
     send({ type: "selection", sel: null });
     editingEl = el; editingOrig = el.innerHTML;
@@ -208,16 +206,32 @@ export const ANCHOR_AGENT_JS = String.raw`(function () {
     el.style.outline = "2px solid #e8870f"; el.style.outlineOffset = "2px";
     el.addEventListener("blur", onEditBlur);
     el.focus();
+    // Place the caret where the user clicked (single-click-to-type feel).
+    if (caret) { try { var s = window.getSelection(); s.removeAllRanges(); s.addRange(caret); } catch (err) {} }
     send({ type: "editStart", id: mgid(el) });
   }
-  document.addEventListener("dblclick", function (e) {
-    if (!editEnabled || commentMode) return;
-    if (controls.contains(e.target)) return;
-    var el = nearestMg(e.target);
-    if (!el) return;
-    e.preventDefault();
-    beginEdit(el);
-  }, true);
+  function caretFromPoint(x, y) {
+    if (document.caretRangeFromPoint) return document.caretRangeFromPoint(x, y);
+    if (document.caretPositionFromPoint) {
+      var p = document.caretPositionFromPoint(x, y);
+      if (!p) return null;
+      var r = document.createRange();
+      r.setStart(p.offsetNode, p.offset); r.collapse(true);
+      return r;
+    }
+    return null;
+  }
+  // Don't hijack clicks on genuinely interactive elements — keep them working.
+  function isInteractive(node) {
+    var el = node;
+    while (el && el.nodeType === 1 && el !== document.body) {
+      var t = el.tagName;
+      if (t === "A" || t === "BUTTON" || t === "INPUT" || t === "TEXTAREA" ||
+          t === "SELECT" || t === "LABEL" || t === "SUMMARY" || t === "OPTION") return true;
+      el = el.parentElement;
+    }
+    return false;
+  }
   document.addEventListener("keydown", function (e) {
     if (e.key === "Escape" && editingEl) { e.preventDefault(); endEdit(false); }
   });
@@ -315,14 +329,23 @@ export const ANCHOR_AGENT_JS = String.raw`(function () {
     positionControls();
   }, { passive: true });
 
-  // ── explicit comment mode: click any element ──
   document.addEventListener("click", function (e) {
-    if (!commentMode) return;
     if (controls.contains(e.target)) return;
-    e.preventDefault(); e.stopPropagation();
-    commentMode = false;
-    document.documentElement.style.cursor = "";
-    send({ type: "placed", anchor: anchorFor(e.target, null), point: { x: e.clientX, y: e.clientY } });
+    // Explicit comment mode: click any element to anchor a comment there.
+    if (commentMode) {
+      e.preventDefault(); e.stopPropagation();
+      commentMode = false;
+      document.documentElement.style.cursor = "";
+      send({ type: "placed", anchor: anchorFor(e.target, null), point: { x: e.clientX, y: e.clientY } });
+      return;
+    }
+    // Single-click to edit: place a caret and start typing (Google-Docs feel).
+    if (!editEnabled || editingEl) return;
+    if (hasSelection()) return;          // a drag-select → comment, not edit
+    if (isInteractive(e.target)) return; // keep links / buttons / inputs working
+    var el = nearestMg(e.target);
+    if (!el || el === document.body) return;
+    beginEdit(el, caretFromPoint(e.clientX, e.clientY));
   }, true);
 
   window.addEventListener("message", function (e) {
