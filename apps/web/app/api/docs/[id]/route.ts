@@ -1,5 +1,5 @@
 import { eq } from "drizzle-orm";
-import { authorize, IngestError, updateDoc } from "@marigold/core";
+import { authorize, IngestError, roleCan, updateDoc } from "@marigold/core";
 import { db, docs } from "@marigold/db";
 import { currentActor } from "@/lib/actor";
 import { json } from "@/lib/http";
@@ -15,13 +15,27 @@ function ingestStatus(code: string): number {
 export async function GET(_req: Request, { params }: Params) {
   const { id } = await params;
   const actor = await currentActor();
-  const { ok } = await authorize(id, actor, "view");
+  const { ok, role } = await authorize(id, actor, "view");
   if (!ok) return json(actor.userId ? 403 : 401, { error: "forbidden" });
 
   const doc = (
     await db.select().from(docs).where(eq(docs.id, id)).limit(1)
   )[0];
   if (!doc) return json(404, { error: "not_found" });
+  // Read-only roles (incl. the public-doc viewer fallback) get published-facing
+  // metadata only — no draft pointer, owner id, or render id.
+  if (!role || !roleCan(role, "update")) {
+    return json(200, {
+      doc: {
+        id: doc.id,
+        slug: doc.slug,
+        title: doc.title,
+        publishedVersionId: doc.publishedVersionId,
+        isPublic: doc.isPublic,
+        createdAt: doc.createdAt,
+      },
+    });
+  }
   return json(200, { doc });
 }
 

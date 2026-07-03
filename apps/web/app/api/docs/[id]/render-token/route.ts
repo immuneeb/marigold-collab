@@ -20,8 +20,7 @@ export async function POST(_req: Request, { params }: Params) {
   const { id } = await params;
   const actor = await currentActor();
   const { ok, role } = await authorize(id, actor, "view");
-  if (!ok || !actor.userId)
-    return json(actor.userId ? 403 : 401, { error: "forbidden" });
+  if (!ok) return json(actor.userId ? 403 : 401, { error: "forbidden" });
 
   const doc = (
     await db.select().from(docs).where(eq(docs.id, id)).limit(1)
@@ -37,7 +36,7 @@ export async function POST(_req: Request, { params }: Params) {
   if (!versionId) return json(404, { error: "not_published" });
 
   const token = await signRenderToken(
-    { doc: id, ver: versionId, sub: actor.userId },
+    { doc: id, ver: versionId, sub: actor.userId ?? "anon" },
     config.renderTokenTtl,
   );
   const renderOrigin = renderOriginFor(doc.renderId);

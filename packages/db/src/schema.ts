@@ -64,6 +64,9 @@ export const docs = pgTable("docs", {
   latestVersionId: text("latest_version_id"), // assistant's most recent write
   publishedVersionId: text("published_version_id"), // what shared viewers see
   title: text("title"),
+  // Link visibility: public docs are viewable (published version only) by
+  // anyone, no login. Editing/commenting still requires an explicit grant.
+  isPublic: boolean("is_public").notNull().default(false),
   // Kill switch (CEO-review hardening): instantly quarantine a malicious doc.
   quarantined: boolean("quarantined").notNull().default(false),
   createdAt: createdAt(),

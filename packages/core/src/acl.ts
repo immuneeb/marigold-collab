@@ -25,8 +25,10 @@ export function roleCan(role: Role, action: Action): boolean {
 
 /**
  * The actor's effective role on a doc: owner if they own it, else the role from
- * an ACTIVE share bound to one of their verified emails. null = no access.
- * (Shares are populated in Phase 3; in Phase 1 only `owner` ever resolves.)
+ * an ACTIVE share bound to one of their verified emails, else `viewer` on
+ * public docs (including anonymous actors). null = no access.
+ * Quarantined docs resolve for the owner only (who needs `manage` to lift the
+ * quarantine); every other actor — shares and the public fallback — gets null.
  */
 export async function resolveRole(
   docId: string,
@@ -35,29 +37,37 @@ export async function resolveRole(
 ): Promise<Role | null> {
   const doc = (
     await db
-      .select({ ownerId: docs.ownerId })
+      .select({
+        ownerId: docs.ownerId,
+        isPublic: docs.isPublic,
+        quarantined: docs.quarantined,
+      })
       .from(docs)
       .where(eq(docs.id, docId))
       .limit(1)
   )[0];
   if (!doc) return null;
   if (userId && doc.ownerId === userId) return "owner";
-  if (verifiedEmails.length === 0) return null;
+  if (doc.quarantined) return null;
 
-  const grant = (
-    await db
-      .select({ role: shares.role })
-      .from(shares)
-      .where(
-        and(
-          eq(shares.docId, docId),
-          eq(shares.state, "active"),
-          inArray(shares.email, verifiedEmails),
-        ),
-      )
-      .limit(1)
-  )[0];
-  return (grant?.role as Role | undefined) ?? null;
+  if (verifiedEmails.length > 0) {
+    const grant = (
+      await db
+        .select({ role: shares.role })
+        .from(shares)
+        .where(
+          and(
+            eq(shares.docId, docId),
+            eq(shares.state, "active"),
+            inArray(shares.email, verifiedEmails),
+          ),
+        )
+        .limit(1)
+    )[0];
+    if (grant) return grant.role as Role;
+  }
+
+  return doc.isPublic ? "viewer" : null;
 }
 
 export interface Actor {

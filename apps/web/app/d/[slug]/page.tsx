@@ -42,7 +42,8 @@ export default async function ViewerPage({ params }: Params) {
   const { ok, role } = await authorize(doc.id, actor, "view");
 
   if (!ok) {
-    if (!actor.userId) redirect(`/login`);
+    if (!actor.userId)
+      redirect(`/login?callbackUrl=${encodeURIComponent(`/d/${slug}`)}`);
     return (
       <Notice
         title="No access"
@@ -71,8 +72,10 @@ export default async function ViewerPage({ params }: Params) {
     );
   }
 
+  // Public docs render for anonymous viewers; the render origin never reads
+  // `sub`, it only proves the ACL check happened.
   const token = await signRenderToken(
-    { doc: doc.id, ver: versionId, sub: actor.userId as string },
+    { doc: doc.id, ver: versionId, sub: actor.userId ?? "anon" },
     config.renderTokenTtl,
   );
   const iframeSrc = `${renderOrigin}/${versionId}/index.html?t=${encodeURIComponent(token)}`;
@@ -87,6 +90,7 @@ export default async function ViewerPage({ params }: Params) {
       canComment={!!role && roleCan(role, "comment")}
       canEdit={!!role && roleCan(role, "update")}
       isOwner={role === "owner"}
+      signedIn={!!actor.userId}
     />
   );
 }

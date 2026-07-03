@@ -21,7 +21,8 @@ export default async function EditPage({ params }: Params) {
   const actor = await currentActor();
   const { ok } = await authorize(doc.id, actor, "update");
   if (!ok) {
-    if (!actor.userId) redirect("/login");
+    if (!actor.userId)
+      redirect(`/login?callbackUrl=${encodeURIComponent(`/d/${slug}/edit`)}`);
     redirect(`/d/${slug}`);
   }
 

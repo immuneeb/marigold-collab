@@ -13,6 +13,7 @@ import {
   IngestError,
   MARIGOLD_DIGEST,
   renderOriginFor,
+  roleCan,
   updateDoc,
 } from "@marigold/core";
 import { comments, db, docs } from "@marigold/db";
@@ -234,6 +235,7 @@ const baseHandler = createMcpHandler(
             slug: docs.slug,
             title: docs.title,
             url: docs.slug,
+            public: docs.isPublic,
             createdAt: docs.createdAt,
           })
           .from(docs)
@@ -273,21 +275,29 @@ const baseHandler = createMcpHandler(
         const userId = userIdOf(extra);
         if (!userId) return fail("unauthenticated");
         const actor = await actorForUserId(userId);
-        const { ok: allowed } = await authorize(docId, actor, "view");
+        const { ok: allowed, role } = await authorize(docId, actor, "view");
         if (!allowed) return fail("not authorized to view this doc");
         const doc = (
           await db.select().from(docs).where(eq(docs.id, docId)).limit(1)
         )[0];
         if (!doc) return fail("doc not found");
-        const currentHtml = await currentHtmlOf(doc.latestVersionId);
+        // Update-capable roles read the working draft; read-only roles (incl.
+        // the public-doc viewer fallback) only see the published version.
+        const canUpdate = !!role && roleCan(role, "update");
+        const currentHtml = await currentHtmlOf(
+          canUpdate
+            ? doc.latestVersionId
+            : doc.publishedVersionId,
+        );
         return ok({
           docId: doc.id,
           slug: doc.slug,
           title: doc.title,
           url: `/d/${doc.slug}`,
           renderOrigin: renderOriginFor(doc.renderId),
-          latestVersionId: doc.latestVersionId,
+          ...(canUpdate ? { latestVersionId: doc.latestVersionId } : {}),
           publishedVersionId: doc.publishedVersionId,
+          public: doc.isPublic,
           currentHtml,
         });
       },
@@ -297,19 +307,45 @@ const baseHandler = createMcpHandler(
       "share_doc",
       {
         title: "Share doc",
-        description: "Grant a person access to a doc by email.",
+        description:
+          "Grant a person access to a doc by email, and/or set link visibility. Public docs are viewable (published version) by anyone with the link, no sign-in; editing and commenting always require an explicit grant.",
         inputSchema: {
           docId: z.string(),
-          email: z.string(),
+          email: z.string().optional(),
           role: z.enum(["viewer", "commenter", "editor"]).optional(),
+          public: z
+            .boolean()
+            .optional()
+            .describe("true = anyone with the link can view; false = private"),
         },
       },
-      async ({ docId, email, role }, extra: ToolExtra) => {
+      async ({ docId, email, role, public: makePublic }, extra: ToolExtra) => {
         const userId = userIdOf(extra);
         if (!userId) return fail("unauthenticated");
         const actor = await actorForUserId(userId);
         const { ok: allowed } = await authorize(docId, actor, "manage");
         if (!allowed) return fail("not authorized to share this doc");
+
+        if (email === undefined && makePublic === undefined)
+          return fail("provide an email to grant access, public to set link visibility, or both");
+
+        if (makePublic !== undefined) {
+          await db
+            .update(docs)
+            .set({ isPublic: makePublic })
+            .where(eq(docs.id, docId));
+        }
+        if (email === undefined) {
+          const doc = (
+            await db
+              .select({ slug: docs.slug })
+              .from(docs)
+              .where(eq(docs.id, docId))
+              .limit(1)
+          )[0];
+          if (!doc) return fail("doc not found");
+          return ok({ public: makePublic, url: `/d/${doc.slug}` });
+        }
 
         const grantRole = role ?? "viewer";
         const { email: normalized, state } = await upsertShare({
@@ -341,6 +377,7 @@ const baseHandler = createMcpHandler(
           role: grantRole,
           inviteSent: invite.sent,
           inviteLink: invite.link,
+          ...(makePublic !== undefined ? { public: makePublic } : {}),
         });
       },
     );

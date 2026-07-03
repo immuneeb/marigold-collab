@@ -31,6 +31,7 @@ export function ViewerClient(props: {
   canComment: boolean;
   canEdit: boolean;
   isOwner: boolean;
+  signedIn: boolean;
 }) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [comments, setComments] = useState<Comment[]>([]);
@@ -289,9 +290,19 @@ export function ViewerClient(props: {
               Manage
             </Link>
           )}
-          <Link href="/" className="btn-ghost">
-            Dashboard
-          </Link>
+          {props.signedIn ? (
+            <Link href="/" className="btn-ghost">
+              Dashboard
+            </Link>
+          ) : (
+            <Link
+              href={`/login?callbackUrl=${encodeURIComponent(`/d/${props.slug}`)}`}
+              className="btn-secondary btn-inline"
+              title="Sign in to comment or edit"
+            >
+              Sign in
+            </Link>
+          )}
         </div>
       </header>
 

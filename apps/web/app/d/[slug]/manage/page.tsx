@@ -32,6 +32,7 @@ export default async function ManagePage({ params }: Params) {
       title={doc.title}
       latestVersionId={doc.latestVersionId}
       publishedVersionId={doc.publishedVersionId}
+      isPublic={doc.isPublic}
       quarantined={doc.quarantined}
       initialShares={shares}
       initialGrants={grants.map((g) => g.origin)}

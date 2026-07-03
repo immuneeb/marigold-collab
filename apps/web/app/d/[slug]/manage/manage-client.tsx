@@ -17,6 +17,7 @@ export function ManageClient(props: {
   title: string | null;
   latestVersionId: string | null;
   publishedVersionId: string | null;
+  isPublic: boolean;
   quarantined: boolean;
   initialShares: Share[];
   initialGrants: string[];
@@ -91,6 +92,32 @@ export function ManageClient(props: {
             Publish latest
           </button>
         )}
+      </section>
+
+      <section className="manage-block">
+        <h2 className="manage-h">General access</h2>
+        <p className="muted small">
+          {props.isPublic
+            ? "Public — anyone with the link can view the published version, no sign-in needed. Editing and commenting still require access below."
+            : "Private — only you and the people listed below can open this doc."}
+        </p>
+        <button
+          className="btn-secondary btn-inline"
+          disabled={busy}
+          onClick={async () => {
+            const { res, data } = await call(
+              `/api/docs/${props.docId}/visibility`,
+              {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ public: !props.isPublic }),
+              },
+            );
+            if (!res.ok) setMsg(data.error ?? "Failed");
+          }}
+        >
+          {props.isPublic ? "Make private" : "Make public"}
+        </button>
       </section>
 
       <section className="manage-block">
