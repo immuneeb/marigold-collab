@@ -50,8 +50,24 @@ first response.
   write latency", not "Caching").
 - Tables for anything enumerable or comparable; prose only for causality and
   narrative.
-- Define every term at first use. No unexplained jargon, no filler.
-- Halve it: if the text survives at half the length, cut it to half.
+- Expand every acronym at first use — "content delivery network (CDN)", then
+  CDN alone. Skip the expansion when the acronym is better known than its
+  words (API, URL, HTML); skip the acronym entirely when the term appears
+  only once or twice — just write the words.
+- Define every term at first use, landing the new term at the end of its
+  defining sentence ("...this delay is called *hysteresis*"), then use it
+  freely — one name per concept for the whole piece. No unexplained jargon.
+- Every abstraction gets a representative example within a few sentences:
+  concrete (real names, real values, worked end to end) and typical, not
+  edge-case. Give load-bearing concepts two examples that differ on the
+  surface; give confusable ones a close non-example ("this nearly identical
+  case is NOT X, because...").
+- Meet the likely misconception head-on: name it, refute it, give the correct
+  model ("You might think X — actually Z, because..."). Omitting a
+  misconception never dislodges it.
+- Halve it: if the text survives at half the length, cut it to half. Cut
+  seductive details first — interesting-but-irrelevant asides measurably
+  hurt recall.
 
 ## In-chat visuals
 
@@ -78,16 +94,54 @@ first response.
 
 export const DOC_GUIDE = `# Authoring Marigold docs
 
+Outline first — the outline is most of the work. Before writing any HTML:
+
+- Headings form a causal chain, not a topic list: hook (the question and why
+  it matters) → concrete case → mechanism → complication → resolution → edges
+  and open questions. Join sections by consequence or tension ("therefore",
+  "but"), never "and then". Test: read only the headings — they should tell
+  the argument by themselves.
+- Pick the one master diagram: a single SVG of the whole territory near the
+  top; each section zooms into one region of it. Repeat a mini version with
+  the current region highlighted as a "you are here" cue at section heads.
+- Fix the aha: identify the single counter-intuitive reveal the doc is built
+  around, and sequence the outline to set it up.
+- Plan every section at three layers: skim (claim-heading + load-bearing
+  figure + a one-sentence takeaway), read (the prose), deep (<details>
+  blocks). The skim layer alone must deliver the whole arc.
+- Alternate altitude deliberately and signpost it ("Zooming out:", "Down in
+  the weeds:"). After any deep-detail passage, re-orient to the big picture
+  in one line.
+
 Structure — the doc follows the same Marigold Way:
 
-- Answer first: the core insight sits at the top, visible without scrolling.
-- Three altitudes on one page: one-liner → one-screen core → deep dive
-  (collapsible <details> sections work well for depth).
-- The main diagram is load-bearing: inline SVG, labeled, referenced by the
-  text.
+- Answer first: the core insight sits at the top, visible without scrolling —
+  never a definitions section.
+- Three altitudes on one page: one-liner → one-screen core → deep dive.
+  Collapse only what is genuinely optional (derivations, edge cases, formal
+  treatments); never hide load-bearing narrative in a collapsed section or a
+  non-default tab.
+- Diagrams are load-bearing: inline SVG, labeled directly on the figure — no
+  separate legends; split attention kills comprehension — and referenced by
+  the prose ("the red feedback arrow"). Crude-but-labeled beats
+  polished-but-vague; no decorative images.
+- Chart titles state the takeaway ("Latency doubles past 1k connections", not
+  "Latency vs. connections"), annotations on the plot, a source line beneath.
 - Tables for comparisons; short sections with claim-style headings.
-- Light interactivity where it cuts cognitive load (tabs, toggles, hover
-  detail, small explorables) — inline JS runs.
+
+Interactivity — guided, never a sandbox:
+
+- The default state of every widget already shows the insight; interaction
+  deepens the point but is never required to get it.
+- Put a one-line experiment next to every control ("Set decay to 0 — the
+  oscillation never stops"). A widget without a prompt is a toy, not an
+  explanation.
+- Tabs only for alternative representations of the same thing (diagram /
+  table / formula), never for sequential content.
+- Multi-stage processes: one SVG with Prev/Next buttons, a step counter, one
+  change per step. No scroll-jacking, no auto-play, no ambient animation.
+- Cheapest high-value interactivity is reactive text: an assumption in a
+  sentence bound to a slider, with consequences updating inline.
 
 Technical envelope — docs render in a sandboxed iframe under a strict CSP:
 
@@ -124,10 +178,38 @@ resolve_comment. The address_feedback prompt runs this end to end.`;
 
 const DEFAULT_AUDIENCE = "a sharp generalist who does not know this domain's jargon";
 
-const LEARN_POSTURE = `Learning posture: layer concepts in dependency order,
-introduce one new primitive at a time, recap each layer in one line before
-building on it, and end each response with the single question that best tests
-understanding.`;
+// Research & learning posture — grounded in learning science: cognitive load
+// theory (Sweller), Mayer's multimedia principles, retrieval practice
+// (Roediger & Karpicke), concreteness fading (Fyfe et al.), refutation texts.
+const LEARN_POSTURE = `# Learning posture
+
+The goal is retention and transfer, not coverage:
+
+- Dependency order: build the concept graph first; never use a term before
+  the section that defines it. One new concept cluster per section, recapped
+  in one line before building on it.
+- Pre-train the schema: open with the 3-7 core terms and a skeletal map of
+  the parts and their relations; later sections attach detail to that map.
+- Concrete → schematic → abstract (concreteness fading): introduce every
+  abstraction through a specific instance, extract the general form, then
+  step back down ("for our example, this means...").
+- Worked examples before exercises: show one fully worked, step-annotated
+  example of any procedure, then a second with later steps hidden for the
+  reader to complete.
+- Prediction before reveal: open counterintuitive sections by asking the
+  reader to guess the outcome ("Before reading on — what happens if...?");
+  the section resolves it. Wrong guesses still improve learning.
+- Retrieval, not re-reading: end each major section with 1-3 check-yourself
+  questions whose answers sit behind a reveal — never printed in plain
+  sight. Close the doc with a short cumulative quiz mixing all sections.
+- Spiral, don't close: deliberately reuse earlier concepts inside later
+  sections instead of finishing each topic for good.
+- Layer for expertise: the main narrative targets the novice; "already know
+  X? skip ahead" links and collapsed formal treatments serve experts.
+- Conversational but lean: address the reader as "you"; personalization is a
+  style transform on essential content, not a license for filler.
+- Difficulty belongs in retrieval, never in perception or navigation: no
+  gamification, no streaks or confetti, nothing hard to read or find.`;
 
 export function buildAnalyzePrompt(topic: string, audience?: string): string {
   return [
