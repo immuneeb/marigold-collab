@@ -80,7 +80,7 @@ Claude Desktop registration (`~/Library/Application Support/Claude/claude_deskto
 ```json
 {
   "mcpServers": {
-    "marigold-local": {
+    "marigold-draft": {
       "command": "/opt/homebrew/bin/node",
       "args": ["<repo>/packages/local/dist/cli.cjs", "mcp"]
     }
@@ -88,8 +88,10 @@ Claude Desktop registration (`~/Library/Application Support/Claude/claude_deskto
 }
 ```
 
-For Claude Code, a `marigold-local` skill (`~/.claude/skills/marigold-local/`)
-teaches the agent the CLI loop — saying "marigold-local" in chat spins one up.
+For Claude Code, a `marigold-draft` skill (`~/.claude/skills/marigold-draft/`)
+teaches the agent the CLI loop — saying "spin up marigold draft" in chat does
+the whole thing. (The binary answers to both `marigold-local` and
+`marigold-draft`.)
 
 ## Resilience
 
