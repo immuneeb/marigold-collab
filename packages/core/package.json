@@ -7,7 +7,9 @@
     ".": "./src/index.ts",
     "./tokens": "./src/tokens.ts",
     "./render": "./src/render.ts",
-    "./blobs": "./src/blobs.ts"
+    "./blobs": "./src/blobs.ts",
+    "./instrument": "./src/instrument.ts",
+    "./agent-src": "./src/agent-src.ts"
   },
   "scripts": {
     "keygen": "tsx src/scripts/keygen.ts",
