@@ -51,7 +51,12 @@ describe("local review loop", () => {
     const html = await r.text();
     expect(html).toContain("data-marigold-id");
     expect(html).toContain("/__mg/agent.js");
-    expect(r.headers.get("content-security-policy")).toContain("connect-src 'none'");
+    const csp = r.headers.get("content-security-policy")!;
+    expect(csp).toContain("connect-src 'none'");
+    // Explicit host-source: 'self' is useless to a sandboxed (opaque-origin)
+    // document in WebKit — the agent script must be allowed by origin.
+    expect(csp).toMatch(/script-src [^;]*http:\/\/127\.0\.0\.1:\d+/);
+    expect(csp).toMatch(/script-src [^;]*http:\/\/localhost:\d+/);
   });
 
   it("serves the shell and the anchor agent", async () => {

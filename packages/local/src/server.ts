@@ -106,23 +106,27 @@ function json(res: http.ServerResponse, status: number, body: unknown): void {
   res.end(b);
 }
 
-/** Same CSP as the prod render origin (core/render.ts), so a draft that works
- * locally renders identically once pushed to cloud Marigold. frame-ancestors is
- * 'self' because shell and frame share this origin. */
-function frameHeaders(): Record<string, string> {
+/** Same CSP posture as the prod render origin (core/render.ts), so a draft
+ * that works locally renders identically once pushed to cloud Marigold.
+ * The origin is named EXPLICITLY alongside 'self': the doc lives in a
+ * sandboxed iframe whose document origin is opaque, and WebKit resolves
+ * 'self' against that opaque origin — which silently blocked the anchor
+ * agent script in Safari (no commenting, no selection). A host-source
+ * matches regardless of sandboxing. */
+function frameHeaders(origin: string): Record<string, string> {
   return {
     "content-type": "text/html; charset=utf-8",
     "cache-control": "no-store",
     "content-security-policy": [
-      "default-src 'self'",
-      "script-src 'self' 'unsafe-inline'",
-      "style-src 'self' 'unsafe-inline'",
-      "img-src 'self' data:",
-      "font-src 'self' data:",
+      `default-src 'self' ${origin}`,
+      `script-src 'self' ${origin} 'unsafe-inline'`,
+      `style-src 'self' ${origin} 'unsafe-inline'`,
+      `img-src 'self' ${origin} data:`,
+      `font-src 'self' ${origin} data:`,
       "connect-src 'none'",
       "base-uri 'none'",
       "form-action 'none'",
-      "frame-ancestors 'self'",
+      `frame-ancestors 'self' ${origin}`,
     ].join("; "),
     "x-content-type-options": "nosniff",
     "referrer-policy": "no-referrer",
@@ -450,7 +454,8 @@ export class LocalServer {
         return;
       }
       if (dm[2]) {
-        res.writeHead(200, frameHeaders());
+        // Both spellings of the loopback origin — a tab might be on either.
+        res.writeHead(200, frameHeaders(`http://127.0.0.1:${this.port} http://localhost:${this.port}`));
         res.end(session.instrumented);
       } else {
         res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
