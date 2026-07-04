@@ -164,6 +164,70 @@ describe("local review loop", () => {
     }
   });
 
+  it("agent listen stream: presence, live delivery, connect catch-up", async () => {
+    async function readReview(
+      reader: ReadableStreamDefaultReader<Uint8Array>,
+      timeoutMs: number,
+    ): Promise<Record<string, unknown> | null> {
+      const dec = new TextDecoder();
+      let buf = "";
+      let event = "";
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline) {
+        const chunk = (await Promise.race([
+          reader.read(),
+          new Promise<null>((r) => setTimeout(() => r(null), Math.max(1, deadline - Date.now()))),
+        ])) as { done: boolean; value?: Uint8Array } | null;
+        if (!chunk || chunk.done) return null;
+        buf += dec.decode(chunk.value, { stream: true });
+        let i: number;
+        while ((i = buf.indexOf("\n")) >= 0) {
+          const line = buf.slice(0, i).trimEnd();
+          buf = buf.slice(i + 1);
+          if (line.startsWith("event: ")) event = line.slice(7);
+          else if (line.startsWith("data: ")) {
+            if (event === "review") return JSON.parse(line.slice(6)) as Record<string, unknown>;
+            event = "";
+          }
+        }
+      }
+      return null;
+    }
+
+    // No waiter, no listener → not present.
+    let doc = (await (await api(`/api/docs/${docId}`)).json()) as { agentListening: boolean };
+    expect(doc.agentListening).toBe(false);
+
+    // Listener connects → presence flips, submits stream live.
+    const ac = new AbortController();
+    const stream = await fetch(`${base}/api/agent/listen`, { signal: ac.signal });
+    expect(stream.ok).toBe(true);
+    const reader = stream.body!.getReader();
+    doc = (await (await api(`/api/docs/${docId}`)).json()) as { agentListening: boolean };
+    expect(doc.agentListening).toBe(true);
+
+    const sub = await post(`/api/docs/${docId}/submit`, { overallComment: "via listener" });
+    expect(((await sub.json()) as { agentListening: boolean }).agentListening).toBe(true);
+    const live = await readReview(reader, 5000);
+    expect(live?.overallComment).toBe("via listener");
+    // Delivered via the stream — a wait must block, not re-deliver.
+    expect((await api(`/api/docs/${docId}/wait?timeout=1`)).status).toBe(204);
+
+    // Disconnect → presence drops; a round submitted now is caught up by the
+    // next listener the moment it connects.
+    ac.abort();
+    await new Promise((r) => setTimeout(r, 150));
+    doc = (await (await api(`/api/docs/${docId}`)).json()) as { agentListening: boolean };
+    expect(doc.agentListening).toBe(false);
+    await post(`/api/docs/${docId}/submit`, { overallComment: "while away" });
+
+    const ac2 = new AbortController();
+    const stream2 = await fetch(`${base}/api/agent/listen`, { signal: ac2.signal });
+    const caught = await readReview(stream2.body!.getReader(), 5000);
+    expect(caught?.overallComment).toBe("while away");
+    ac2.abort();
+  });
+
   it("wraps fragments and unwraps them on inline-edit write-back", async () => {
     const frag = join(dir, "frag.html");
     writeFileSync(frag, "<h2>Section</h2><p>Fragment body</p>");

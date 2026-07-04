@@ -23,6 +23,22 @@ agents. It is idempotent — re-run it after upgrades.
 Then verify: `marigold-draft open` on any HTML file should print a localhost
 URL and open a browser tab with a 🌼 comment sidebar.
 
+## Stay connected (preferred, when your harness supports it)
+
+If your agent harness has a persistent background monitor primitive, start one
+listener at the beginning of a review session and leave it running:
+
+```sh
+marigold-draft listen
+```
+
+One stream covers every draft: each user "Send feedback to agent" prints one
+JSON review round on stdout and wakes you instantly. It reconnects forever,
+restarts the daemon if needed, catches up rounds submitted while nothing was
+listening, and keeps the tab's "● Agent connected" indicator truthful. With a
+listener running, open drafts with `open --no-wait` and skip the blocking
+waits below.
+
 ## The review loop (how you work with it)
 
 1. **Author a draft.** Write a self-contained HTML file — a full document, or

@@ -111,6 +111,52 @@ async function open(positional: string[], flags: Record<string, string | boolean
   }
 }
 
+/**
+ * `listen` — hold one long-lived SSE stream covering every draft and print
+ * each submitted review round as a single JSON line on stdout. Designed to
+ * run under a persistent monitor (agent harness) or any supervisor: it
+ * reconnects forever, restarting the daemon if needed, and the daemon counts
+ * the connection as agent presence (tabs show "● Agent connected").
+ */
+async function listen(): Promise<never> {
+  let announced = false;
+  for (;;) {
+    try {
+      const port = await ensureServer();
+      const resp = await fetch(`http://127.0.0.1:${port}/api/agent/listen`);
+      if (resp.ok && resp.body) {
+        if (!announced) {
+          log(`listening for review rounds on http://127.0.0.1:${port} (all drafts)`);
+          announced = true;
+        }
+        const reader = resp.body.getReader();
+        const dec = new TextDecoder();
+        let buf = "";
+        let event = "";
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += dec.decode(value, { stream: true });
+          let i: number;
+          while ((i = buf.indexOf("\n")) >= 0) {
+            const line = buf.slice(0, i).trimEnd();
+            buf = buf.slice(i + 1);
+            if (line.startsWith("event: ")) event = line.slice(7).trim();
+            else if (line.startsWith("data: ")) {
+              if (event === "review") process.stdout.write(line.slice(6).trim() + "\n");
+              event = "";
+            }
+          }
+        }
+      }
+    } catch {
+      /* daemon restarting or unreachable — retry below */
+    }
+    log("listen stream closed — reconnecting…");
+    await new Promise((r) => setTimeout(r, 1500));
+  }
+}
+
 async function withDoc(file: string | undefined, flags: Record<string, string | boolean>): Promise<{ port: number; doc: OpenResult }> {
   if (!file) throw new Error("a <file> argument is required");
   const port = await ensureServer(flags.port ? Number(flags.port) : undefined);
@@ -147,6 +193,10 @@ async function main(): Promise<void> {
 
     case "open":
       await open(positional, flags);
+      return;
+
+    case "listen":
+      await listen();
       return;
 
     case "comments": {
@@ -233,6 +283,8 @@ async function main(): Promise<void> {
                    --no-wait      register + open, return immediately
                    --timeout <s>  give up waiting after s seconds
                    --title <t>    set the doc title
+  listen           stream every submitted review round as JSON lines (all drafts);
+                   reconnects forever — run under a persistent monitor/supervisor
   comments <file>  list comments   [--json]
   reply <file> <id> <text…>   reply to a comment (badged AI)
   resolve|reopen <file> <id>  set a comment's status

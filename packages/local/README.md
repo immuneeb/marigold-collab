@@ -59,6 +59,8 @@ commentable.
 ```
 open <file>       serve + open in browser, wait for feedback
                   --json --no-browser --no-wait --timeout <s> --title <t>
+listen            stream every submitted round as JSON lines (all drafts);
+                  reconnects forever — run under a persistent monitor
 comments <file>   list threads               [--json]
 reply <file> <id> <text…>    reply to a comment (badged AI in the UI)
 resolve|reopen <file> <id>   set comment status

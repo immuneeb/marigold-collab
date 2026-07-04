@@ -39,6 +39,27 @@ Binary: \`marigold-draft\` (alias \`marigold-local\`). It auto-starts a shared
 background daemon on port 4747; never run \`serve\` yourself and don't \`stop\`
 the daemon when done — other drafts may be using it.
 
+## Stay connected: the persistent listener (do this FIRST)
+
+If your harness has a persistent/long-running monitor primitive (e.g. Claude
+Code's Monitor tool with \`persistent: true\`), start ONE listener at the start
+of a review session and leave it running:
+
+\`\`\`sh
+marigold-draft listen
+\`\`\`
+
+It holds a single stream covering every draft: each time the user clicks
+"Send feedback to agent", one JSON line (the review round — same shape as
+\`open --json\`) appears on stdout and wakes you. It reconnects forever,
+restarts the daemon if needed, catches up rounds submitted while nothing was
+listening, and keeps the tab's "● Agent connected" indicator truthful. With a
+listener running you do NOT need blocking \`open\` waits — use
+\`open --no-wait\` just to register/open drafts.
+
+Only fall back to the blocking-wait loop below if you cannot run a persistent
+monitor.
+
 ## The loop
 
 1. **Author the draft.** Write a self-contained HTML file (full document, or a
@@ -48,8 +69,9 @@ the daemon when done — other drafts may be using it.
    \`~/.marigold-local/drafts/\` or the project dir — the file path is the doc's
    identity.
 
-2. **Open it and block for feedback** — run as a background process so its exit
-   re-invokes you the moment the user submits:
+2. **Open it** — with a listener running: \`marigold-draft open <file> --no-wait\`.
+   Fallback (no persistent monitor): block for feedback as a background process
+   so its exit re-invokes you the moment the user submits:
 
    \`\`\`sh
    marigold-draft open /abs/path/draft.html --json --timeout 570
@@ -89,13 +111,17 @@ the daemon when done — other drafts may be using it.
 const AGENTS_SNIPPET = `## Marigold Draft (local review loop)
 
 When asked to "spin up marigold draft" (or for a local commentable draft):
-1. Write a self-contained HTML file (inline all CSS/JS/SVG; no external URLs).
-2. Run \`marigold-draft open <file> --json --timeout 570\` in the background —
-   it opens the user's browser and blocks until they click "Send feedback to
-   agent", then prints the feedback JSON (comments with anchoredText) and exits.
+1. If your harness supports a persistent background monitor, start
+   \`marigold-draft listen\` under it once — each user "Send feedback to agent"
+   prints one JSON review round on stdout and wakes you. Then open drafts with
+   \`marigold-draft open <file> --no-wait\`.
+2. Otherwise: write the self-contained HTML file (inline all CSS/JS/SVG), run
+   \`marigold-draft open <file> --json --timeout 570\` in the background — it
+   opens the browser, blocks until "Send feedback to agent", prints the
+   feedback JSON, exits (code 2 = timed out; re-arm).
 3. Revise the file with targeted edits (the tab live-reloads; comments re-anchor),
    then \`marigold-draft reply <file> <id> "<what changed>"\` and
-   \`marigold-draft resolve <file> <id>\`, and re-run step 2 with --no-browser.
+   \`marigold-draft resolve <file> <id>\`.
 Never run \`marigold-draft serve\` or \`stop\` yourself.`;
 
 function desktopConfigPath(): string {

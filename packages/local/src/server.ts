@@ -148,6 +148,9 @@ async function readBody(req: http.IncomingMessage): Promise<Record<string, unkno
 export class LocalServer {
   private byId = new Map<string, DocSession>();
   private byPath = new Map<string, DocSession>();
+  /** Long-lived agent subscriptions (`marigold-draft listen`) — one stream
+   * covers every draft. Presence for tabs = doc waiters OR any listener. */
+  private agentListeners = new Set<http.ServerResponse>();
   readonly server: http.Server;
   private opts: Required<LocalServerOptions>;
   port = 0;
@@ -182,6 +185,8 @@ export class LocalServer {
   }
 
   close(): void {
+    for (const l of this.agentListeners) l.end();
+    this.agentListeners.clear();
     for (const s of this.byId.values()) {
       s.watcher?.close();
       if (s.refreshTimer) clearTimeout(s.refreshTimer);
@@ -312,10 +317,30 @@ export class LocalServer {
     for (const c of session.sse) c.write(frame);
   }
 
-  /** Tell open tabs whether an agent is currently blocked on /wait — the shell
-   * shows this so "Send" never silently lands in a void. */
+  private agentPresent(session: DocSession): boolean {
+    return session.waiters.size > 0 || this.agentListeners.size > 0;
+  }
+
+  /** Tell open tabs whether an agent is reachable (blocked on /wait or holding
+   * a listen stream) — the shell shows this so "Send" never silently lands in
+   * a void. */
   private broadcastAgentPresence(session: DocSession): void {
-    this.broadcast(session, "agent", { listening: session.waiters.size > 0 });
+    this.broadcast(session, "agent", { listening: this.agentPresent(session) });
+  }
+
+  private broadcastAgentPresenceAll(): void {
+    for (const s of this.byId.values()) this.broadcastAgentPresence(s);
+  }
+
+  /** Hand any not-yet-delivered round to one agent stream (connect catch-up). */
+  private emitPendingTo(session: DocSession, listener: http.ServerResponse): void {
+    if (session.sidecar.reviews.length <= session.sidecar.deliveredSeq) return;
+    const last = session.sidecar.reviews[session.sidecar.reviews.length - 1]!;
+    const payload = this.reviewPayload(session, last.overallComment);
+    payload.reviewSeq = session.sidecar.reviews.length;
+    session.sidecar.deliveredSeq = payload.reviewSeq;
+    saveSidecar(session.path, session.sidecar);
+    listener.write(`event: review\ndata: ${JSON.stringify(payload)}\n\n`);
   }
 
   // ── comments ──
@@ -433,6 +458,34 @@ export class LocalServer {
       return;
     }
 
+    // Long-lived agent stream: one connection covers every draft. Each
+    // submitted round arrives as an SSE `review` event; rounds submitted while
+    // nothing was listening are caught up on connect. This is what
+    // `marigold-draft listen` (run under a persistent monitor) consumes.
+    if (p === "/api/agent/listen" && method === "GET") {
+      res.writeHead(200, {
+        "content-type": "text/event-stream",
+        "cache-control": "no-store",
+        connection: "keep-alive",
+      });
+      res.write(`event: hello\ndata: {"docs":${this.byId.size}}\n\n`);
+      this.agentListeners.add(res);
+      this.broadcastAgentPresenceAll();
+      // Catch up on every known draft's pending rounds — including docs the
+      // daemon hasn't loaded this lifetime (registry-wide sweep).
+      for (const docId of Object.keys(registryLoad())) {
+        const session = this.resolveSession(docId);
+        if (session) this.emitPendingTo(session, res);
+      }
+      const ping = setInterval(() => res.write(": ping\n\n"), 25000);
+      req.on("close", () => {
+        clearInterval(ping);
+        this.agentListeners.delete(res);
+        this.broadcastAgentPresenceAll();
+      });
+      return;
+    }
+
     if (p === "/api/open" && method === "POST") {
       const body = await readBody(req);
       if (typeof body.path !== "string") {
@@ -490,7 +543,7 @@ export class LocalServer {
         path: session.path,
         version: session.sidecar.version,
         reviewSeq: session.sidecar.reviews.length,
-        agentListening: session.waiters.size > 0,
+        agentListening: this.agentPresent(session),
         comments: session.sidecar.comments,
       });
       return;
@@ -503,7 +556,7 @@ export class LocalServer {
         connection: "keep-alive",
       });
       res.write(
-        `event: hello\ndata: {"version":${session.sidecar.version},"agentListening":${session.waiters.size > 0}}\n\n`,
+        `event: hello\ndata: {"version":${session.sidecar.version},"agentListening":${this.agentPresent(session)}}\n\n`,
       );
       session.sse.add(res);
       const ping = setInterval(() => res.write(": ping\n\n"), 25000);
@@ -604,7 +657,7 @@ export class LocalServer {
     if (sub === "/submit" && method === "POST") {
       const body = await readBody(req);
       const overall = typeof body.overallComment === "string" && body.overallComment.trim() ? body.overallComment.trim() : null;
-      const agentListening = session.waiters.size > 0;
+      const agentListening = this.agentPresent(session);
       const payload = this.reviewPayload(session, overall);
       const round: ReviewRound = {
         at: new Date().toISOString(),
@@ -618,11 +671,18 @@ export class LocalServer {
       payload.reviewSeq = session.sidecar.reviews.length;
       if (agentListening) session.sidecar.deliveredSeq = payload.reviewSeq;
       saveSidecar(session.path, session.sidecar);
-      for (const w of session.waiters) {
-        clearTimeout(w.timer);
-        json(w.res, 200, payload);
+      if (session.waiters.size > 0) {
+        // Blocking waiters take priority — never double-deliver a round.
+        for (const w of session.waiters) {
+          clearTimeout(w.timer);
+          json(w.res, 200, payload);
+        }
+        session.waiters.clear();
+      } else {
+        for (const l of this.agentListeners) {
+          l.write(`event: review\ndata: ${JSON.stringify(payload)}\n\n`);
+        }
       }
-      session.waiters.clear();
       this.broadcastAgentPresence(session);
       this.broadcast(session, "submitted", { reviewSeq: payload.reviewSeq, agentListening });
       json(res, 200, { ok: true, reviewSeq: payload.reviewSeq, agentListening });
