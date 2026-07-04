@@ -20,7 +20,16 @@ apps/
 packages/
   db/       Drizzle schema + migrations (Postgres)
   core/     ingest, versioning, blobs, capability tokens, ACL (Phase 1)
+  local/    marigold-local — localhost review loop for agent-authored drafts
 ```
+
+## Local review loop (no cloud needed)
+
+`marigold-local` runs the same comment shell against a file on disk for fast
+agent↔human iteration: the agent writes `draft.html`, you comment in the
+browser and hit **Send feedback to agent**, the agent's blocked CLI call
+returns your feedback, and its next save live-reloads the tab. See
+**[packages/local/README.md](./packages/local/README.md)**.
 
 ## Prerequisites
 
