@@ -335,6 +335,15 @@ export class LocalServer {
       return;
     }
 
+    if (p === "/favicon.ico" && method === "GET") {
+      res.writeHead(200, {
+        "content-type": "image/svg+xml",
+        "cache-control": "public, max-age=86400",
+      });
+      res.end('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><text y="13" font-size="13">🌼</text></svg>');
+      return;
+    }
+
     if (p === "/__mg/agent.js" && method === "GET") {
       res.writeHead(200, {
         "content-type": "text/javascript; charset=utf-8",
