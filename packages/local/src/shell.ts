@@ -398,12 +398,12 @@ export function shellHtml(docId: string, title: string): string {
       agentLine.appendChild(s);
       agentLine.appendChild(document.createTextNode("Agent is revising\\u2026 the page reloads when it saves"));
     } else if (submitState === "away") {
-      agentLine.textContent = "Feedback saved \\u2713 \\u2014 the agent isn\\u2019t connected right now; it\\u2019ll be delivered the moment it checks back in.";
+      agentLine.textContent = "Feedback saved \\u2713 \\u2014 no agent connected. It\\u2019s delivered automatically when one checks in; to deliver now, tell your agent \\u201Ccheck the draft\\u201D.";
     } else if (agentListening) {
       agentLine.className = "agent-line on";
       agentLine.textContent = "\\u25CF Agent connected \\u2014 feedback lands instantly";
     } else {
-      agentLine.textContent = "\\u25CB Agent not connected \\u2014 feedback is saved and delivered when it returns";
+      agentLine.textContent = "\\u25CB Agent not connected \\u2014 feedback is saved for when it returns; \\u201Ccheck the draft\\u201D in chat delivers it instantly";
     }
   }
   function flashAgentLine(text) {
