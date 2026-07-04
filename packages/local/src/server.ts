@@ -312,6 +312,12 @@ export class LocalServer {
     for (const c of session.sse) c.write(frame);
   }
 
+  /** Tell open tabs whether an agent is currently blocked on /wait — the shell
+   * shows this so "Send" never silently lands in a void. */
+  private broadcastAgentPresence(session: DocSession): void {
+    this.broadcast(session, "agent", { listening: session.waiters.size > 0 });
+  }
+
   // ── comments ──
 
   private addComment(
@@ -484,6 +490,7 @@ export class LocalServer {
         path: session.path,
         version: session.sidecar.version,
         reviewSeq: session.sidecar.reviews.length,
+        agentListening: session.waiters.size > 0,
         comments: session.sidecar.comments,
       });
       return;
@@ -495,7 +502,9 @@ export class LocalServer {
         "cache-control": "no-store",
         connection: "keep-alive",
       });
-      res.write(`event: hello\ndata: {"version":${session.sidecar.version}}\n\n`);
+      res.write(
+        `event: hello\ndata: {"version":${session.sidecar.version},"agentListening":${session.waiters.size > 0}}\n\n`,
+      );
       session.sse.add(res);
       const ping = setInterval(() => res.write(": ping\n\n"), 25000);
       req.on("close", () => {
@@ -595,6 +604,7 @@ export class LocalServer {
     if (sub === "/submit" && method === "POST") {
       const body = await readBody(req);
       const overall = typeof body.overallComment === "string" && body.overallComment.trim() ? body.overallComment.trim() : null;
+      const agentListening = session.waiters.size > 0;
       const payload = this.reviewPayload(session, overall);
       const round: ReviewRound = {
         at: new Date().toISOString(),
@@ -605,25 +615,29 @@ export class LocalServer {
       // Durable before the handoff event — a missed waiter can still recover
       // the round from the sidecar (roughdraft's file-first lesson).
       session.sidecar.reviews.push(round);
-      saveSidecar(session.path, session.sidecar);
       payload.reviewSeq = session.sidecar.reviews.length;
+      if (agentListening) session.sidecar.deliveredSeq = payload.reviewSeq;
+      saveSidecar(session.path, session.sidecar);
       for (const w of session.waiters) {
         clearTimeout(w.timer);
         json(w.res, 200, payload);
       }
       session.waiters.clear();
-      this.broadcast(session, "submitted", { reviewSeq: payload.reviewSeq });
-      json(res, 200, { ok: true, reviewSeq: payload.reviewSeq });
+      this.broadcastAgentPresence(session);
+      this.broadcast(session, "submitted", { reviewSeq: payload.reviewSeq, agentListening });
+      json(res, 200, { ok: true, reviewSeq: payload.reviewSeq, agentListening });
       return;
     }
 
     if (sub === "/wait" && method === "GET") {
-      // ?since=<reviewSeq>: if a round landed after the caller's `open`, hand it
-      // over immediately — closes the submit-before-wait race.
-      const since = Number(url.searchParams.get("since") ?? NaN);
-      if (Number.isFinite(since) && session.sidecar.reviews.length > since) {
+      // A round submitted while no agent was listening is delivered to the
+      // NEXT wait immediately — feedback can be late, never lost.
+      if (session.sidecar.reviews.length > session.sidecar.deliveredSeq) {
         const last = session.sidecar.reviews[session.sidecar.reviews.length - 1]!;
         const payload = this.reviewPayload(session, last.overallComment);
+        payload.reviewSeq = session.sidecar.reviews.length;
+        session.sidecar.deliveredSeq = payload.reviewSeq;
+        saveSidecar(session.path, session.sidecar);
         json(res, 200, payload);
         return;
       }
@@ -632,14 +646,16 @@ export class LocalServer {
         res,
         timer: setTimeout(() => {
           session.waiters.delete(waiter);
+          this.broadcastAgentPresence(session);
           res.writeHead(204);
           res.end();
         }, timeoutS * 1000),
       };
       session.waiters.add(waiter);
+      this.broadcastAgentPresence(session);
       req.on("close", () => {
         clearTimeout(waiter.timer);
-        session.waiters.delete(waiter);
+        if (session.waiters.delete(waiter)) this.broadcastAgentPresence(session);
       });
       return;
     }

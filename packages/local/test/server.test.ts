@@ -96,6 +96,7 @@ describe("local review loop", () => {
     await new Promise((r) => setTimeout(r, 100));
     const sub = await post(`/api/docs/${docId}/submit`, { overallComment: "ship it" });
     expect(sub.ok).toBe(true);
+    expect(((await sub.json()) as { agentListening: boolean }).agentListening).toBe(true);
     const w = await waitP;
     expect(w.status).toBe(200);
     const payload = (await w.json()) as ReviewPayload;
@@ -104,13 +105,22 @@ describe("local review loop", () => {
     expect(payload.openComments).toHaveLength(1);
     expect(payload.openComments[0]!.anchoredText).toContain("quick brown fox");
     expect(payload.openComments[0]!.replies).toHaveLength(1);
+    // Delivered live — a fresh wait must block, not re-deliver.
+    const again = await api(`/api/docs/${docId}/wait?timeout=1`);
+    expect(again.status).toBe(204);
   });
 
-  it("wait?since= hands over a missed round immediately", async () => {
-    const r = await api(`/api/docs/${docId}/wait?timeout=5&since=0`);
+  it("delivers a round submitted while no agent was listening", async () => {
+    const sub = await post(`/api/docs/${docId}/submit`, { overallComment: "anyone there?" });
+    expect(((await sub.json()) as { agentListening: boolean }).agentListening).toBe(false);
+    // The next wait gets the missed round immediately — late, never lost.
+    const r = await api(`/api/docs/${docId}/wait?timeout=10`);
     expect(r.status).toBe(200);
     const payload = (await r.json()) as ReviewPayload;
-    expect(payload.reviewSeq).toBe(1);
+    expect(payload.overallComment).toBe("anyone there?");
+    // …and exactly once.
+    const again = await api(`/api/docs/${docId}/wait?timeout=1`);
+    expect(again.status).toBe(204);
   });
 
   it("file edits bump the version and re-anchor comments", async () => {

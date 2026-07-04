@@ -87,7 +87,6 @@ async function open(positional: string[], flags: Record<string, string | boolean
   const budgetS = flags.timeout ? Number(flags.timeout) : Infinity;
   const deadline = Date.now() + budgetS * 1000;
   log("Waiting for the reviewer to send feedback… (Ctrl-C to stop waiting)");
-  let since = doc.reviewSeq;
   for (;;) {
     const remaining = (deadline - Date.now()) / 1000;
     if (remaining <= 0) {
@@ -97,14 +96,15 @@ async function open(positional: string[], flags: Record<string, string | boolean
     const chunk = Math.min(25, Math.ceil(remaining));
     let r: Response;
     try {
-      r = await fetch(`http://127.0.0.1:${port}/api/docs/${doc.docId}/wait?timeout=${chunk}&since=${since}`);
+      // The server delivers any round submitted while nobody was listening
+      // immediately, so a re-armed wait can't miss feedback.
+      r = await fetch(`http://127.0.0.1:${port}/api/docs/${doc.docId}/wait?timeout=${chunk}`);
     } catch {
       throw new Error("lost connection to the marigold-local server");
     }
     if (r.status === 204) continue;
     if (!r.ok) throw new Error(`wait failed (${r.status})`);
     const payload = (await r.json()) as ReviewPayload;
-    since = payload.reviewSeq;
     if (flags.json) process.stdout.write(JSON.stringify(payload, null, 2) + "\n");
     else printReviewHuman(payload);
     return;

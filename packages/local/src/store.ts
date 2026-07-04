@@ -34,6 +34,10 @@ export interface Sidecar {
   version: number;
   comments: LocalComment[];
   reviews: ReviewRound[];
+  /** How many review rounds have been handed to an agent. reviews.length >
+   * deliveredSeq ⇒ a round was submitted while no agent was listening; the
+   * next wait delivers it immediately instead of blocking. */
+  deliveredSeq: number;
   updatedAt: string;
 }
 
@@ -58,6 +62,9 @@ export function loadSidecar(absPath: string, title?: string): Sidecar {
     const raw = JSON.parse(readFileSync(sidecarPathFor(absPath), "utf8")) as Sidecar;
     if (raw && raw.docId && Array.isArray(raw.comments)) {
       if (title) raw.title = title;
+      // Migration: pre-deliveredSeq sidecars were written when delivery was
+      // always live — treat existing rounds as already handed over.
+      if (typeof raw.deliveredSeq !== "number") raw.deliveredSeq = raw.reviews?.length ?? 0;
       return raw;
     }
   } catch {
@@ -70,6 +77,7 @@ export function loadSidecar(absPath: string, title?: string): Sidecar {
     version: 0,
     comments: [],
     reviews: [],
+    deliveredSeq: 0,
     updatedAt: new Date().toISOString(),
   };
 }

@@ -150,13 +150,12 @@ export async function runMcp(): Promise<void> {
           return ok({ path, version: d.version, comments: d.comments });
         }
         const deadline = Date.now() + waitSeconds * 1000;
-        let since = doc.reviewSeq;
         for (;;) {
           const remaining = Math.ceil((deadline - Date.now()) / 1000);
           if (remaining <= 0) return ok({ path, timedOut: true, hint: "No review round arrived — call get_feedback again to keep waiting." });
           const chunk = Math.min(25, remaining);
           const r = await fetch(
-            `http://127.0.0.1:${port}/api/docs/${doc.docId}/wait?timeout=${chunk}&since=${since}`,
+            `http://127.0.0.1:${port}/api/docs/${doc.docId}/wait?timeout=${chunk}`,
           );
           if (r.status === 204) continue;
           if (!r.ok) return fail(`wait failed (${r.status})`);

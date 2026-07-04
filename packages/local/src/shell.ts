@@ -76,6 +76,12 @@ export function shellHtml(docId: string, title: string): string {
 
   .connbar { display: none; padding: 8px 14px; background: var(--accent-soft); border-bottom: 1px solid var(--marigold); font-size: 13.5px; color: var(--marigold-dark); }
   .connbar.show { display: block; }
+
+  .agent-line { margin: 0; font-size: 12.5px; color: var(--muted); min-height: 18px; }
+  .agent-line.on { color: #15803d; }
+  .agent-line.busy { color: var(--marigold-dark); font-weight: 600; }
+  .spin { display: inline-block; width: 11px; height: 11px; border: 2px solid var(--accent-soft); border-top-color: var(--marigold); border-radius: 50%; animation: mgspin .8s linear infinite; vertical-align: -1px; margin-right: 7px; }
+  @keyframes mgspin { to { transform: rotate(360deg); } }
 </style>
 </head>
 <body>
@@ -106,6 +112,7 @@ export function shellHtml(docId: string, title: string): string {
         <div id="resolvedwrap"></div>
       </div>
       <div class="submit-panel">
+        <p class="agent-line" id="agentLine"></p>
         <textarea id="overall" rows="2" placeholder="Overall feedback (optional)…"></textarea>
         <button class="btn" id="submitBtn">Send feedback to agent</button>
         <p class="muted small hint" id="submitHint">Sends all open comments back to the agent for the next revision. The page live-reloads when the agent saves.</p>
@@ -117,6 +124,7 @@ export function shellHtml(docId: string, title: string): string {
 (function () {
   "use strict";
   var DOC = ${JSON.stringify(docId)};
+  var TITLE = ${JSON.stringify(title)};
   var frame = document.getElementById("frame");
   var overlay = document.getElementById("overlay");
   var threadsEl = document.getElementById("threads");
@@ -373,21 +381,66 @@ export function shellHtml(docId: string, title: string): string {
     sidebar.style.display = sidebar.style.display === "none" ? "flex" : "none";
   });
 
-  // ── submit: the handoff back to the agent ──
+  // ── agent presence + submit lifecycle ──
+  // idle → (submit) → revising (spinner, agent had a live waiter)
+  //                 → away    (saved; no agent connected — delivered later)
+  // reload/version ends revising/away with a "Revision ready" flash + notification.
+  var agentListening = false;
+  var submitState = "idle"; // idle | revising | away
+  var agentLine = document.getElementById("agentLine");
+  function renderAgentLine() {
+    agentLine.textContent = "";
+    agentLine.className = "agent-line";
+    if (submitState === "revising") {
+      agentLine.className = "agent-line busy";
+      var s = document.createElement("span");
+      s.className = "spin";
+      agentLine.appendChild(s);
+      agentLine.appendChild(document.createTextNode("Agent is revising\\u2026 the page reloads when it saves"));
+    } else if (submitState === "away") {
+      agentLine.textContent = "Feedback saved \\u2713 \\u2014 the agent isn\\u2019t connected right now; it\\u2019ll be delivered the moment it checks back in.";
+    } else if (agentListening) {
+      agentLine.className = "agent-line on";
+      agentLine.textContent = "\\u25CF Agent connected \\u2014 feedback lands instantly";
+    } else {
+      agentLine.textContent = "\\u25CB Agent not connected \\u2014 feedback is saved and delivered when it returns";
+    }
+  }
+  function flashAgentLine(text) {
+    submitState = "idle";
+    agentLine.className = "agent-line on";
+    agentLine.textContent = text;
+    setTimeout(renderAgentLine, 4000);
+  }
+  function notify(body) {
+    try {
+      if (!("Notification" in window) || Notification.permission !== "granted") return;
+      if (!document.hidden) return; // visible tab: the reload itself is the signal
+      var n = new Notification(TITLE, { body: body });
+      n.onclick = function () { window.focus(); n.close(); };
+    } catch (e) {}
+  }
+
   var submitBtn = document.getElementById("submitBtn");
   var overall = document.getElementById("overall");
   submitBtn.addEventListener("click", function () {
+    // First submit is the natural moment to ask for notification permission.
+    try {
+      if ("Notification" in window && Notification.permission === "default") Notification.requestPermission();
+    } catch (e) {}
     submitBtn.disabled = true;
     api("/submit", {
       method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ overallComment: overall.value.trim() || null })
-    }).then(function () {
+    }).then(function (resp) {
       overall.value = "";
-      submitBtn.textContent = "Sent ✓ — agent is revising";
+      submitState = resp.agentListening ? "revising" : "away";
+      renderAgentLine();
+      submitBtn.textContent = "Sent \\u2713";
       setTimeout(function () {
         submitBtn.disabled = false;
         submitBtn.textContent = "Send feedback to agent";
-      }, 3000);
+      }, 2000);
     }).catch(function (e) {
       submitBtn.disabled = false;
       submitBtn.textContent = "Send feedback to agent";
@@ -398,16 +451,28 @@ export function shellHtml(docId: string, title: string): string {
   // ── SSE: live reload + comment sync ──
   function connectSSE() {
     var es = new EventSource("/api/docs/" + DOC + "/events");
-    es.addEventListener("hello", function () {
+    es.addEventListener("hello", function (ev) {
       // (Re)connected — daemon is up; clear any stale banner and resync.
       clearConn();
+      try { agentListening = !!JSON.parse(ev.data).agentListening; } catch (e) {}
+      if (submitState === "idle") renderAgentLine();
       refresh();
+    });
+    es.addEventListener("agent", function (ev) {
+      try { agentListening = !!JSON.parse(ev.data).listening; } catch (e) {}
+      if (submitState === "idle") renderAgentLine();
     });
     es.addEventListener("reload", function (ev) {
       try { version = JSON.parse(ev.data).version; } catch (e) {}
       rects = {};
       frame.src = "/d/" + DOC + "/frame?v=" + version;
       refresh();
+      if (submitState !== "idle") {
+        flashAgentLine("\\u2713 Revision ready");
+        notify("New revision is ready to view");
+      } else {
+        notify("The draft was updated");
+      }
     });
     es.addEventListener("version", function (ev) {
       try { version = JSON.parse(ev.data).version; } catch (e) {}
@@ -416,6 +481,7 @@ export function shellHtml(docId: string, title: string): string {
     es.onerror = function () { showConn(DAEMON_DOWN); es.close(); setTimeout(connectSSE, 1500); };
   }
   connectSSE();
+  renderAgentLine();
 
   refresh();
   // The iframe can finish loading before our listener attaches — push config a
