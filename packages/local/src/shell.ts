@@ -73,6 +73,9 @@ export function shellHtml(docId: string, title: string): string {
   .submit-panel .btn { width: 100%; }
   .submit-panel .hint { margin: 0; }
   .submit-panel .sent { color: var(--marigold-dark); font-weight: 600; }
+
+  .connbar { display: none; padding: 8px 14px; background: var(--accent-soft); border-bottom: 1px solid var(--marigold); font-size: 13.5px; color: var(--marigold-dark); }
+  .connbar.show { display: block; }
 </style>
 </head>
 <body>
@@ -89,6 +92,7 @@ export function shellHtml(docId: string, title: string): string {
       <button class="btn-ghost" id="sidebarBtn">Comments</button>
     </div>
   </header>
+  <div class="connbar" id="connbar"></div>
   <div class="viewer-body">
     <div class="doc-pane">
       <iframe id="frame" class="docframe" sandbox="allow-scripts" src="/d/${docId}/frame?v=0" title="${t}"></iframe>
@@ -134,13 +138,27 @@ export function shellHtml(docId: string, title: string): string {
     msg.__mg = 1;
     try { frame.contentWindow.postMessage(msg, "*"); } catch (e) {}
   }
+  var connbar = document.getElementById("connbar");
+  var DAEMON_DOWN = "Can\\u2019t reach the marigold-local daemon \\u2014 it may have been stopped. Run 'marigold-local open <file>' to restart it; this page reconnects by itself.";
+  function showConn(msg) { connbar.textContent = msg; connbar.className = "connbar show"; }
+  function clearConn() { if (connbar.className !== "connbar") { connbar.textContent = ""; connbar.className = "connbar"; } }
   function api(path, opts) {
     return fetch("/api/docs/" + DOC + path, opts).then(function (r) {
       if (!r.ok) return r.json().catch(function () { return {}; }).then(function (d) {
         throw new Error(d.error || ("HTTP " + r.status));
       });
+      clearConn();
       return r.json();
+    }, function () {
+      // fetch itself rejected — daemon unreachable, not an HTTP error
+      showConn(DAEMON_DOWN);
+      throw new Error("daemon unreachable");
     });
+  }
+  function fail(prefix) {
+    return function (e) {
+      if (e && e.message !== "daemon unreachable") showConn(prefix + ": " + e.message);
+    };
   }
   function roots() { return comments.filter(function (c) { return !c.parentId; }); }
   function repliesOf(id) { return comments.filter(function (c) { return c.parentId === id; }); }
@@ -200,7 +218,7 @@ export function shellHtml(docId: string, title: string): string {
         api("/comments/" + c.id + "/replies", {
           method: "POST", headers: { "content-type": "application/json" },
           body: JSON.stringify({ body: input.value.trim() })
-        }).then(refresh);
+        }).then(refresh).catch(fail("Reply failed"));
         input.value = "";
       }
     });
@@ -211,7 +229,7 @@ export function shellHtml(docId: string, title: string): string {
       api("/comments/" + c.id, {
         method: "PATCH", headers: { "content-type": "application/json" },
         body: JSON.stringify({ status: c.status === "resolved" ? "open" : "resolved" })
-      }).then(refresh);
+      }).then(refresh).catch(fail("Update failed"));
     });
     row.appendChild(res);
     card.appendChild(row);
@@ -283,10 +301,11 @@ export function shellHtml(docId: string, title: string): string {
     var ok = el("button", "btn-secondary", "Comment");
     ok.addEventListener("click", function () {
       if (!ta.value.trim()) return;
+      // Draft (and its text) survives a failed submit — nothing is lost.
       api("/comments", {
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ anchor: draft.anchor, body: ta.value.trim() })
-      }).then(function () { draft = null; refresh(); });
+      }).then(function () { draft = null; refresh(); }).catch(fail("Comment failed"));
     });
     var no = el("button", "btn-ghost", "Cancel");
     no.addEventListener("click", function () { draft = null; render(); });
@@ -372,13 +391,18 @@ export function shellHtml(docId: string, title: string): string {
     }).catch(function (e) {
       submitBtn.disabled = false;
       submitBtn.textContent = "Send feedback to agent";
-      alert("Submit failed: " + e.message);
+      fail("Submit failed")(e);
     });
   });
 
   // ── SSE: live reload + comment sync ──
   function connectSSE() {
     var es = new EventSource("/api/docs/" + DOC + "/events");
+    es.addEventListener("hello", function () {
+      // (Re)connected — daemon is up; clear any stale banner and resync.
+      clearConn();
+      refresh();
+    });
     es.addEventListener("reload", function (ev) {
       try { version = JSON.parse(ev.data).version; } catch (e) {}
       rects = {};
@@ -389,7 +413,7 @@ export function shellHtml(docId: string, title: string): string {
       try { version = JSON.parse(ev.data).version; } catch (e) {}
     });
     es.addEventListener("comments", function () { refresh(); });
-    es.onerror = function () { es.close(); setTimeout(connectSSE, 1500); };
+    es.onerror = function () { showConn(DAEMON_DOWN); es.close(); setTimeout(connectSSE, 1500); };
   }
   connectSSE();
 

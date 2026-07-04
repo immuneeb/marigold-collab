@@ -14,7 +14,9 @@
   },
   "dependencies": {
     "@marigold/core": "workspace:*",
-    "node-html-parser": "^7.0.1"
+    "@modelcontextprotocol/sdk": "^1.26.0",
+    "node-html-parser": "^7.0.1",
+    "zod": "^3.24.1"
   },
   "devDependencies": {
     "@types/node": "^22.10.5",

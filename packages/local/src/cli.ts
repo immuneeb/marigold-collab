@@ -8,23 +8,22 @@
  *   marigold-local comments <file> [--json]
  *   marigold-local reply <file> <commentId> <text…>
  *   marigold-local resolve|reopen <file> <commentId>
- *   marigold-local start [--port N] | status | stop
+ *   marigold-local start [--port N] | status | stop | mcp
  */
-import { spawn } from "node:child_process";
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join, resolve as resolvePath } from "node:path";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  DEFAULT_PORT,
+  ensureServer,
+  openBrowser,
+  ping,
+  readState,
+  registerDoc,
+  STATE_DIR,
+  STATE_FILE,
+  type OpenResult,
+  type ServerState,
+} from "./client";
 import { LocalServer, type ReviewPayload } from "./server";
-
-const STATE_DIR = join(homedir(), ".marigold-local");
-const STATE_FILE = join(STATE_DIR, "server.json");
-const DEFAULT_PORT = Number(process.env.MARIGOLD_LOCAL_PORT ?? 4747);
-
-interface ServerState {
-  port: number;
-  pid: number;
-  startedAt: string;
-}
 
 function log(msg: string): void {
   // stderr, so `--json` stdout stays machine-clean
@@ -49,42 +48,6 @@ function parseArgs(argv: string[]): { cmd: string; positional: string[]; flags: 
   return { cmd, positional, flags };
 }
 
-function readState(): ServerState | null {
-  try {
-    return JSON.parse(readFileSync(STATE_FILE, "utf8")) as ServerState;
-  } catch {
-    return null;
-  }
-}
-
-async function ping(port: number): Promise<boolean> {
-  try {
-    const r = await fetch(`http://127.0.0.1:${port}/api/status`, { signal: AbortSignal.timeout(700) });
-    return r.ok;
-  } catch {
-    return false;
-  }
-}
-
-async function ensureServer(preferredPort?: number): Promise<number> {
-  const state = readState();
-  if (state && (await ping(state.port))) return state.port;
-
-  const port = preferredPort ?? DEFAULT_PORT;
-  const child = spawn(process.execPath, [process.argv[1]!, "serve", "--port", String(port)], {
-    detached: true,
-    stdio: "ignore",
-  });
-  child.unref();
-
-  for (let i = 0; i < 40; i++) {
-    await new Promise((r) => setTimeout(r, 150));
-    const s = readState();
-    if (s && s.pid === child.pid && (await ping(s.port))) return s.port;
-  }
-  throw new Error("could not start the marigold-local server (try `marigold-local serve` for logs)");
-}
-
 async function serve(flags: Record<string, string | boolean>): Promise<void> {
   const server = new LocalServer({ allowShutdown: true });
   const port = await server.listen(Number(flags.port ?? DEFAULT_PORT));
@@ -98,35 +61,6 @@ async function serve(flags: Record<string, string | boolean>): Promise<void> {
   };
   process.on("SIGINT", bye);
   process.on("SIGTERM", bye);
-}
-
-function openBrowser(url: string): void {
-  const cmd = process.platform === "darwin" ? "open" : process.platform === "win32" ? "cmd" : "xdg-open";
-  const args = process.platform === "win32" ? ["/c", "start", "", url] : [url];
-  try {
-    spawn(cmd, args, { detached: true, stdio: "ignore" }).unref();
-  } catch {
-    /* URL is printed anyway */
-  }
-}
-
-interface OpenResult {
-  docId: string;
-  url: string;
-  version: number;
-  reviewSeq: number;
-  connectedClients: number;
-}
-
-async function registerDoc(port: number, file: string, title?: string): Promise<OpenResult> {
-  const r = await fetch(`http://127.0.0.1:${port}/api/open`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ path: resolvePath(file), title }),
-  });
-  const data = (await r.json()) as OpenResult & { error?: string };
-  if (!r.ok) throw new Error(data.error ?? `open failed (${r.status})`);
-  return data;
 }
 
 function printReviewHuman(p: ReviewPayload): void {
@@ -191,6 +125,13 @@ async function main(): Promise<void> {
     case "serve":
       await serve(flags);
       return;
+
+    case "mcp": {
+      // stdio MCP server for chat clients (Claude Desktop etc.).
+      const { runMcp } = await import("./mcp");
+      await runMcp();
+      return;
+    }
 
     case "start": {
       const port = await ensureServer(flags.port ? Number(flags.port) : undefined);
@@ -289,7 +230,8 @@ async function main(): Promise<void> {
   comments <file>  list comments   [--json]
   reply <file> <id> <text…>   reply to a comment (badged AI)
   resolve|reopen <file> <id>  set a comment's status
-  start | status | stop       manage the background server`);
+  start | status | stop       manage the background server
+  mcp                         stdio MCP server (for Claude Desktop and other chat clients)`);
       if (cmd !== "help") process.exit(1);
   }
 }

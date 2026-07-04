@@ -63,7 +63,40 @@ reply <file> <id> <text…>    reply to a comment (badged AI in the UI)
 resolve|reopen <file> <id>   set comment status
 start | status | stop        manage the background daemon (default port 4747,
                              override with MARIGOLD_LOCAL_PORT or --port)
+mcp               stdio MCP server for chat clients (see below)
 ```
+
+## MCP server (Claude Desktop and other chat clients)
+
+`marigold-local mcp` speaks MCP over stdio, for clients that can't run shell
+commands. Tools: `create_draft` (html in → file written under
+`~/.marigold-local/drafts/` → browser opens), `open_draft`, `update_draft`
+(tab live-reloads), `get_feedback` (with `waitSeconds` it blocks until the
+reviewer hits "Send feedback to agent"), `reply_to_comment`,
+`resolve_comment`, `read_draft`.
+
+Claude Desktop registration (`~/Library/Application Support/Claude/claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "marigold-local": {
+      "command": "/opt/homebrew/bin/node",
+      "args": ["<repo>/packages/local/dist/cli.cjs", "mcp"]
+    }
+  }
+}
+```
+
+For Claude Code, a `marigold-local` skill (`~/.claude/skills/marigold-local/`)
+teaches the agent the CLI loop — saying "marigold-local" in chat spins one up.
+
+## Resilience
+
+The daemon persists a docId→path registry (`~/.marigold-local/docs.json`) and
+lazily re-opens docs on demand, so browser tabs survive daemon restarts; the
+shell shows an inline banner while the daemon is unreachable and reconnects
+automatically. Comments live in the sidecar and are never lost with the daemon.
 
 ## How it works
 

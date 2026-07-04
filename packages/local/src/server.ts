@@ -1,6 +1,7 @@
-import { existsSync, readFileSync, watch, writeFileSync, type FSWatcher } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, watch, writeFileSync, type FSWatcher } from "node:fs";
 import * as http from "node:http";
-import { dirname, basename, resolve as resolvePath } from "node:path";
+import { homedir } from "node:os";
+import { dirname, basename, join, resolve as resolvePath } from "node:path";
 import { parse } from "node-html-parser";
 import { ANCHOR_AGENT_JS } from "@marigold/core/agent-src";
 import { applyInlineEdits, instrumentHtml, type CommentAnchor } from "@marigold/core/instrument";
@@ -66,6 +67,35 @@ export interface ReviewPayload {
 }
 
 const FILE_RE = /\.(html?|svg)$/i;
+
+// docId → file path, persisted so a restarted daemon can lazily re-open docs
+// that still-open tabs keep fetching (docIds are path hashes — not reversible).
+// Path resolved per call so tests can isolate via MARIGOLD_LOCAL_HOME.
+function registryFile(): string {
+  return join(process.env.MARIGOLD_LOCAL_HOME ?? homedir(), ".marigold-local", "docs.json");
+}
+
+type Registry = Record<string, { path: string; title?: string }>;
+
+function registryLoad(): Registry {
+  try {
+    return JSON.parse(readFileSync(registryFile(), "utf8")) as Registry;
+  } catch {
+    return {};
+  }
+}
+
+function registrySave(docId: string, path: string, title?: string): void {
+  try {
+    const reg = registryLoad();
+    reg[docId] = { path, ...(title ? { title } : {}) };
+    const file = registryFile();
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, JSON.stringify(reg, null, 2) + "\n");
+  } catch {
+    /* registry is best-effort — worst case a restarted daemon 404s until re-open */
+  }
+}
 
 function json(res: http.ServerResponse, status: number, body: unknown): void {
   const b = JSON.stringify(body);
@@ -212,7 +242,22 @@ export class LocalServer {
 
     this.byId.set(session.docId, session);
     this.byPath.set(abs, session);
+    registrySave(session.docId, abs, session.sidecar.title);
     return session;
+  }
+
+  /** Find a session by docId, lazily re-opening from the persisted registry —
+   * this is what lets a tab opened before a daemon restart keep working. */
+  private resolveSession(docId: string): DocSession | null {
+    const existing = this.byId.get(docId);
+    if (existing) return existing;
+    const entry = registryLoad()[docId];
+    if (!entry || !existsSync(entry.path)) return null;
+    try {
+      return this.openDoc(entry.path, entry.title);
+    } catch {
+      return null;
+    }
   }
 
   /** Read the file, wrap+instrument, re-anchor. Returns true if content changed. */
@@ -398,7 +443,7 @@ export class LocalServer {
     // /d/:id[/frame]
     const dm = p.match(/^\/d\/([\w-]+)(\/frame)?$/);
     if (dm && method === "GET") {
-      const session = this.byId.get(dm[1] ?? "");
+      const session = this.resolveSession(dm[1] ?? "");
       if (!session) {
         res.writeHead(404, { "content-type": "text/plain" });
         res.end("draft not open — run: marigold-local open <file>");
@@ -420,7 +465,7 @@ export class LocalServer {
       json(res, 404, { error: "not found" });
       return;
     }
-    const session = this.byId.get(am[1] ?? "");
+    const session = this.resolveSession(am[1] ?? "");
     if (!session) {
       json(res, 404, { error: "unknown doc — POST /api/open first" });
       return;

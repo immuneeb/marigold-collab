@@ -171,9 +171,15 @@ importers:
       '@marigold/core':
         specifier: workspace:*
         version: link:../core
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.26.0
+        version: 1.29.0(zod@3.25.76)
       node-html-parser:
         specifier: ^7.0.1
         version: 7.1.0
+      zod:
+        specifier: ^3.24.1
+        version: 3.25.76
     devDependencies:
       '@types/node':
         specifier: ^22.10.5

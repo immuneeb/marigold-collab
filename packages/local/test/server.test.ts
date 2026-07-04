@@ -4,6 +4,9 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { LocalServer, type ReviewPayload } from "../src/server";
 
+// Isolate the persisted doc registry from the real ~/.marigold-local.
+process.env.MARIGOLD_LOCAL_HOME = mkdtempSync(join(tmpdir(), "mgl-home-"));
+
 let server: LocalServer;
 let base: string;
 let dir: string;
@@ -128,6 +131,22 @@ describe("local review loop", () => {
     });
     expect(r.ok).toBe(true);
     expect(readFileSync(file, "utf8")).toContain("Draft v3 (edited in place)");
+  });
+
+  it("a restarted daemon lazily re-opens known docs (old tabs keep working)", async () => {
+    const server2 = new LocalServer({ watchDebounceMs: 30 });
+    const port2 = await server2.listen(0);
+    try {
+      // No POST /api/open on server2 — resolution must come from the registry.
+      const r = await fetch(`http://127.0.0.1:${port2}/api/docs/${docId}`);
+      expect(r.status).toBe(200);
+      const d = (await r.json()) as { comments: unknown[] };
+      expect(d.comments.length).toBeGreaterThan(0); // sidecar reloaded too
+      const frame = await fetch(`http://127.0.0.1:${port2}/d/${docId}/frame`);
+      expect(frame.status).toBe(200);
+    } finally {
+      server2.close();
+    }
   });
 
   it("wraps fragments and unwraps them on inline-edit write-back", async () => {
