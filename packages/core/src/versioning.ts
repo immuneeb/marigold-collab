@@ -1,4 +1,4 @@
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import {
   blobs as blobsTable,
   comments,
@@ -13,7 +13,7 @@ import { config, renderOriginFor } from "./env";
 import { ingest, type IngestResult, type InputFile } from "./ingest";
 import { type CommentAnchor, resolveAnchor } from "./instrument";
 import { makeSlug } from "./slug";
-import type { BlobStore } from "./types";
+import type { BlobStore, Manifest } from "./types";
 
 function htmlOf(ing: IngestResult): string | null {
   const f = ing.files.find((x) => x.path === "index.html");
@@ -281,6 +281,25 @@ export async function updateDoc(input: UpdateDocInput): Promise<VersionResult> {
   };
 }
 
+/**
+ * Rename a doc. Title is doc-level metadata — renaming never rolls a version
+ * (future versions pick up the new title via updateDoc's `?? doc.title`).
+ * Empty/whitespace titles clear to null ("Untitled").
+ */
+export async function renameDoc(
+  docId: string,
+  title: string | null,
+): Promise<{ title: string | null }> {
+  const normalized = title?.trim() ? title.trim().slice(0, 300) : null;
+  const updated = await db
+    .update(docs)
+    .set({ title: normalized })
+    .where(eq(docs.id, docId))
+    .returning({ id: docs.id });
+  if (updated.length === 0) throw new Error(`doc not found: ${docId}`);
+  return { title: normalized };
+}
+
 export async function publishDoc(
   docId: string,
   versionId: string,
@@ -297,6 +316,76 @@ export async function publishDoc(
     .update(docs)
     .set({ publishedVersionId: versionId })
     .where(eq(docs.id, docId));
+}
+
+/**
+ * Permanently delete a doc. The docs row delete cascades to versions, comments,
+ * shares, and network grants. Blobs are content-addressed and dedup'd across
+ * docs, so a blob is purged only when no surviving version still references its
+ * sha — computed inside the same transaction as the delete. External storage
+ * cleanup runs after commit and is best-effort: a leftover content-addressed
+ * blob is unreachable garbage, never a broken doc.
+ * Returns false if the doc does not exist.
+ */
+export async function deleteDoc(docId: string): Promise<boolean> {
+  const result = await db.transaction(async (tx) => {
+    const doc = (
+      await tx
+        .select({ id: docs.id })
+        .from(docs)
+        .where(eq(docs.id, docId))
+        .for("update")
+    )[0];
+    if (!doc) return null;
+
+    const versions = await tx
+      .select({ id: docVersions.id, manifest: docVersions.manifest })
+      .from(docVersions)
+      .where(eq(docVersions.docId, docId));
+    const candidateShas = [
+      ...new Set(
+        versions.flatMap((v) => Object.values((v.manifest ?? {}) as Manifest)),
+      ),
+    ];
+
+    await tx.delete(docs).where(eq(docs.id, docId));
+
+    let orphanShas: string[] = [];
+    if (candidateShas.length > 0) {
+      // Shas still referenced by any surviving version of any doc stay put.
+      const shaList = sql.join(
+        candidateShas.map((s) => sql`${s}`),
+        sql`, `,
+      );
+      const rows = await tx.execute(sql`
+        select distinct e.value as sha
+        from ${docVersions}, jsonb_each_text(${docVersions.manifest}) as e
+        where e.value in (${shaList})
+      `);
+      const referenced = new Set(
+        Array.from(rows as Iterable<Record<string, unknown>>).map(
+          (r) => r.sha as string,
+        ),
+      );
+      orphanShas = candidateShas.filter((s) => !referenced.has(s));
+      if (orphanShas.length > 0) {
+        await tx.delete(blobsTable).where(inArray(blobsTable.sha256, orphanShas));
+      }
+    }
+
+    return { versionIds: versions.map((v) => v.id), orphanShas };
+  });
+
+  if (!result) return false;
+
+  const store = getBlobStore();
+  for (const versionId of result.versionIds) {
+    await store.deleteManifest(versionId);
+  }
+  for (const sha of result.orphanShas) {
+    await store.deleteBlob(sha);
+  }
+  return true;
 }
 
 export interface ResolvedDoc {

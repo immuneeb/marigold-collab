@@ -140,6 +140,35 @@ h1 {
   color: var(--fg);
 }
 
+.btn-danger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: auto;
+  border-radius: 10px;
+  padding: 7px 12px;
+  font: inherit;
+  font-weight: 550;
+  cursor: pointer;
+  background: transparent;
+  color: #b3261e;
+  border: 1px solid #e8c4c0;
+}
+.btn-danger:hover {
+  background: #fdf0ef;
+  border-color: #b3261e;
+}
+
+.danger-delete {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+.danger-actions {
+  display: flex;
+  gap: 8px;
+}
+
 .dev {
   margin-top: 22px;
   padding-top: 18px;
@@ -255,6 +284,30 @@ textarea {
 .viewer-title {
   font-weight: 600;
   letter-spacing: -0.01em;
+}
+/* Editable title: reads as plain text until hovered/focused. Overrides the
+   global input styling (full width, padding, border). */
+.viewer-title-input {
+  width: auto;
+  min-width: 80px;
+  max-width: 40vw;
+  field-sizing: content;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 2px 8px;
+  margin-left: -8px;
+  font: inherit;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.viewer-title-input:hover {
+  border-color: var(--line);
+}
+.viewer-title-input:focus {
+  background: #fff;
+  border-color: var(--marigold);
+  outline: 2px solid var(--accent-soft);
 }
 .ugc-pill {
   font-size: 11px;

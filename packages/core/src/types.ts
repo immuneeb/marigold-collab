@@ -14,4 +14,7 @@ export interface BlobStore extends BlobReader {
   hasBlob(sha256: string): Promise<boolean>;
   putBlob(sha256: string, bytes: Uint8Array): Promise<void>;
   putManifest(versionId: string, manifest: Manifest): Promise<void>;
+  /** Idempotent: deleting a missing blob/manifest is a no-op, not an error. */
+  deleteBlob(sha256: string): Promise<void>;
+  deleteManifest(versionId: string): Promise<void>;
 }

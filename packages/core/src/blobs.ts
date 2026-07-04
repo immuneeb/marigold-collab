@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { eq } from "drizzle-orm";
@@ -59,6 +59,12 @@ export function fsBlobStore(dir: string = defaultBlobDir()): BlobStore {
         return null;
       }
     },
+    async deleteBlob(sha) {
+      await rm(blobPath(sha), { force: true });
+    },
+    async deleteManifest(v) {
+      await rm(manifestPath(v), { force: true });
+    },
   };
 }
 
@@ -76,6 +82,7 @@ export function s3BlobStore(opts: {
     GetObjectCommand,
     PutObjectCommand,
     HeadObjectCommand,
+    DeleteObjectCommand,
     // eslint-disable-next-line @typescript-eslint/no-var-requires
   } = require("@aws-sdk/client-s3") as typeof import("@aws-sdk/client-s3");
 
@@ -143,6 +150,16 @@ export function s3BlobStore(opts: {
         return null;
       }
     },
+    async deleteBlob(sha) {
+      await s3.send(
+        new DeleteObjectCommand({ Bucket: opts.bucket, Key: blobKey(sha) }),
+      );
+    },
+    async deleteManifest(v) {
+      await s3.send(
+        new DeleteObjectCommand({ Bucket: opts.bucket, Key: manifestKey(v) }),
+      );
+    },
   };
 }
 
@@ -203,6 +220,14 @@ export function pgBlobStore(): BlobStore {
           .limit(1)
       )[0];
       return (r?.m as Manifest | undefined) ?? null;
+    },
+    async deleteBlob(sha) {
+      // Bytes live in the blobs row; deleteDoc removes rows in its txn, so this
+      // only matters when called outside that path. Idempotent either way.
+      await db.delete(blobsTable).where(eq(blobsTable.sha256, sha));
+    },
+    async deleteManifest() {
+      // Manifest lives in doc_versions.manifest — gone with the version row.
     },
   };
 }

@@ -9,6 +9,7 @@ import {
   buildStartAnalysisText,
   createDoc,
   deinstrumentHtml,
+  deleteDoc,
   getBlobStore,
   IngestError,
   MARIGOLD_DIGEST,
@@ -379,6 +380,26 @@ const baseHandler = createMcpHandler(
           inviteLink: invite.link,
           ...(makePublic !== undefined ? { public: makePublic } : {}),
         });
+      },
+    );
+
+    server.registerTool(
+      "delete_doc",
+      {
+        title: "Delete doc",
+        description:
+          "Permanently delete a doc you own — the doc, every version, and all comments and shares are removed, and its URL stops working. This cannot be undone, so only call it when the human has explicitly asked to delete the doc (never to \"clean up\" on your own).",
+        inputSchema: { docId: z.string() },
+      },
+      async ({ docId }, extra: ToolExtra) => {
+        const userId = userIdOf(extra);
+        if (!userId) return fail("unauthenticated");
+        const actor = await actorForUserId(userId);
+        const { ok: allowed } = await authorize(docId, actor, "delete");
+        if (!allowed) return fail("not authorized to delete this doc (owner only)");
+        const deleted = await deleteDoc(docId);
+        if (!deleted) return fail("doc not found");
+        return ok({ deleted: true, docId });
       },
     );
 

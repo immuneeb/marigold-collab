@@ -49,6 +49,13 @@ export function ViewerClient(props: {
   const flushingRef = useRef(false);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [saveError, setSaveError] = useState<string | null>(null);
+  // Title edits share the save indicator but not the version chain — a rename
+  // is metadata and never rolls a version.
+  const [title, setTitle] = useState(props.title ?? "");
+  const savedTitleRef = useRef(props.title ?? "");
+  // Escape reverts state, but blur() fires before React re-renders — the blur
+  // handler still closes over the edited title, so it must skip the save.
+  const cancelTitleRef = useRef(false);
 
   const roots = useMemo(
     () => comments.filter((c) => !c.parentId),
@@ -134,6 +141,34 @@ export function ViewerClient(props: {
       if (!failed && queueRef.current.size > 0) void flushEdits();
     }
   }, [props.docId]);
+
+  // Idempotent: no-op when the title already matches what's saved, so the
+  // error bar's Retry can call it blindly alongside flushEdits.
+  const saveTitle = useCallback(async () => {
+    const next = title.trim();
+    if (next === savedTitleRef.current) {
+      if (next !== title) setTitle(next);
+      return;
+    }
+    setSaveState("saving");
+    setSaveError(null);
+    try {
+      const res = await fetch(`/api/docs/${props.docId}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ title: next }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.message ?? data.error ?? "Rename failed");
+      savedTitleRef.current = data.title ?? "";
+      setTitle(data.title ?? "");
+      setSaveState("saved");
+      setTimeout(() => setSaveState((s) => (s === "saved" ? "idle" : s)), 2500);
+    } catch (e) {
+      setSaveState("error");
+      setSaveError((e as Error).message);
+    }
+  }, [props.docId, title]);
 
   // postMessage from the agent — validate it's THIS iframe's window.
   useEffect(() => {
@@ -253,7 +288,33 @@ export function ViewerClient(props: {
           <Link href="/" className="wordmark" style={{ textDecoration: "none" }}>
             🌼
           </Link>
-          <span className="viewer-title">{props.title ?? "Untitled"}</span>
+          {props.canEdit ? (
+            <input
+              className="viewer-title viewer-title-input"
+              value={title}
+              placeholder="Untitled"
+              aria-label="Doc title"
+              title="Click to rename"
+              onChange={(e) => setTitle(e.target.value)}
+              onBlur={() => {
+                if (cancelTitleRef.current) {
+                  cancelTitleRef.current = false;
+                  return;
+                }
+                void saveTitle();
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") e.currentTarget.blur();
+                else if (e.key === "Escape") {
+                  cancelTitleRef.current = true;
+                  setTitle(savedTitleRef.current);
+                  e.currentTarget.blur();
+                }
+              }}
+            />
+          ) : (
+            <span className="viewer-title">{props.title ?? "Untitled"}</span>
+          )}
           <span className="ugc-pill" title="Rendered in an isolated origin">
             user-generated · isolated
           </span>
@@ -310,7 +371,13 @@ export function ViewerClient(props: {
         <div className="savebar">
           <span className="error">Couldn&apos;t save: {saveError}</span>
           <span className="savebar-actions">
-            <button className="btn btn-inline" onClick={() => void flushEdits()}>
+            <button
+              className="btn btn-inline"
+              onClick={() => {
+                void flushEdits();
+                void saveTitle();
+              }}
+            >
               Retry
             </button>
             <button

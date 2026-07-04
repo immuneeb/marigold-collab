@@ -25,6 +25,8 @@ export function ManageClient(props: {
   const router = useRouter();
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const published = props.publishedVersionId === props.latestVersionId;
 
@@ -35,6 +37,21 @@ export function ManageClient(props: {
     setBusy(false);
     router.refresh();
     return { res, data };
+  }
+
+  async function deletePermanently() {
+    setBusy(true);
+    setDeleteError(null);
+    const res = await fetch(`/api/docs/${props.docId}`, { method: "DELETE" });
+    if (res.ok) {
+      // The doc (and this page) no longer exist — leave, don't refresh.
+      router.push("/");
+      router.refresh();
+      return;
+    }
+    const data = await res.json().catch(() => ({}));
+    setBusy(false);
+    setDeleteError(data.error ?? "Delete failed");
   }
 
   async function addShare(e: React.FormEvent<HTMLFormElement>) {
@@ -250,6 +267,39 @@ export function ManageClient(props: {
         >
           {props.quarantined ? "Un-quarantine" : "Quarantine doc"}
         </button>
+        <div className="danger-delete">
+          <p className="muted small">
+            Deleting is permanent: the doc, every version, and all comments and
+            shares are removed. This cannot be undone.
+          </p>
+          {confirmDelete ? (
+            <div className="danger-actions">
+              <button
+                className="btn-danger"
+                disabled={busy}
+                onClick={deletePermanently}
+              >
+                Yes, delete permanently
+              </button>
+              <button
+                className="btn-ghost"
+                disabled={busy}
+                onClick={() => setConfirmDelete(false)}
+              >
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <button
+              className="btn-danger"
+              disabled={busy}
+              onClick={() => setConfirmDelete(true)}
+            >
+              Delete doc…
+            </button>
+          )}
+          {deleteError && <p className="muted small">{deleteError}</p>}
+        </div>
       </section>
     </main>
   );
