@@ -20,18 +20,19 @@ identically.
 
 ## Install
 
-Today (monorepo):
-
 ```sh
-pnpm install
-pnpm --filter @marigold/local build
-# put the bin on your PATH:
-ln -s "$(pwd)/packages/local/dist/cli.cjs" /usr/local/bin/marigold-local
+npm i -g marigold-draft
+marigold-draft agent-setup   # wires up Claude Code (skill) + Claude Desktop (MCP)
 ```
 
-Planned: publish to npm so `npm i -g marigold-local` is the whole journey, and
-bundle it with the cloud MCP connector docs so "install Marigold" sets up both
-the cloud tools and the local loop in one step.
+Or hand this prompt to your coding agent:
+
+> Install Marigold Draft for me using `npm i -g marigold-draft`, then read
+> https://marigold-collab-web.vercel.app/draft/setup.md and set yourself up
+> to use it.
+
+From the monorepo instead: `pnpm --filter marigold-draft build`, then link
+`packages/local/dist/cli.cjs` onto your PATH.
 
 ## The loop (what an agent runs)
 

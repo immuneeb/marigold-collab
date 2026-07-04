@@ -167,26 +167,22 @@ importers:
         version: 5.9.3
 
   packages/local:
-    dependencies:
+    devDependencies:
       '@marigold/core':
         specifier: workspace:*
         version: link:../core
       '@modelcontextprotocol/sdk':
         specifier: ^1.26.0
         version: 1.29.0(zod@3.25.76)
-      node-html-parser:
-        specifier: ^7.0.1
-        version: 7.1.0
-      zod:
-        specifier: ^3.24.1
-        version: 3.25.76
-    devDependencies:
       '@types/node':
         specifier: ^22.10.5
         version: 22.20.0
       esbuild:
         specifier: ^0.25.0
         version: 0.25.12
+      node-html-parser:
+        specifier: ^7.0.1
+        version: 7.1.0
       tsx:
         specifier: ^4.19.2
         version: 4.22.4
@@ -196,6 +192,9 @@ importers:
       vitest:
         specifier: ^2.1.8
         version: 2.1.9(@types/node@22.20.0)
+      zod:
+        specifier: ^3.24.1
+        version: 3.25.76
 
 packages:
 

@@ -133,6 +133,12 @@ async function main(): Promise<void> {
       return;
     }
 
+    case "agent-setup": {
+      const { runAgentSetup } = await import("./agent-setup");
+      runAgentSetup();
+      return;
+    }
+
     case "start": {
       const port = await ensureServer(flags.port ? Number(flags.port) : undefined);
       log(`marigold-local running on http://127.0.0.1:${port}`);
@@ -231,7 +237,8 @@ async function main(): Promise<void> {
   reply <file> <id> <text…>   reply to a comment (badged AI)
   resolve|reopen <file> <id>  set a comment's status
   start | status | stop       manage the background server
-  mcp                         stdio MCP server (for Claude Desktop and other chat clients)`);
+  mcp                         stdio MCP server (for Claude Desktop and other chat clients)
+  agent-setup                 wire up Claude Code (skill) + Claude Desktop (MCP) on this machine`);
       if (cmd !== "help") process.exit(1);
   }
 }

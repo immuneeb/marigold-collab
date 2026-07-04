@@ -11,6 +11,9 @@ export function Landing() {
           <a href="#how" className="landing-link">
             How it works
           </a>
+          <a href="#draft" className="landing-link">
+            Marigold Draft
+          </a>
           <Link href="/login" className="btn btn-inline">
             Sign in
           </Link>
@@ -89,6 +92,41 @@ export function Landing() {
             </div>
           </li>
         </ol>
+      </section>
+
+      <section id="draft" className="how">
+        <h2 className="section-h">Start local with Marigold Draft</h2>
+        <p
+          className="muted"
+          style={{ maxWidth: 640, margin: "0 auto 24px", textAlign: "center" }}
+        >
+          The same review loop, running entirely on your machine — free, no
+          account. Your coding agent drafts a page, you comment and edit it in
+          the browser, and your feedback flows straight back to the agent for
+          the next revision. Give this prompt to your coding agent:
+        </p>
+        <pre
+          style={{
+            maxWidth: 640,
+            margin: "0 auto",
+            padding: "16px 18px",
+            background: "var(--card)",
+            border: "1px solid var(--line)",
+            borderRadius: 12,
+            whiteSpace: "pre-wrap",
+            font: "13.5px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace",
+            userSelect: "all",
+          }}
+        >
+          Install Marigold Draft for me using `npm i -g marigold-draft`, then
+          read https://marigold-collab-web.vercel.app/draft/setup.md and set
+          yourself up to use it.
+        </pre>
+        <p className="muted small" style={{ textAlign: "center", marginTop: 14 }}>
+          Or yourself: <code>npm i -g marigold-draft</code> then{" "}
+          <code>marigold-draft agent-setup</code> · when a draft is ready to
+          share, the same HTML publishes here unchanged.
+        </p>
       </section>
 
       <section className="actors">
