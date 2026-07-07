@@ -103,6 +103,11 @@ function applyRevision(content, rev) {
 async function request(target, spec, vars, state, phase) {
   const url = new URL(fill(spec.path, vars), target.baseUrl);
   const headers = spec.headers ? { ...fill(spec.headers, vars) } : {};
+  // Optional admin bypass for the target's rate limit (benchmarking our own
+  // prod without consuming the public per-IP cap). Env-only, never committed;
+  // ignored by targets that don't check the header (e.g. SMDE).
+  if (process.env.MARIGOLD_ADMIN_TOKEN)
+    headers["x-marigold-admin"] = process.env.MARIGOLD_ADMIN_TOKEN;
   if (spec.auth) {
     if (!state.key) throw new Error(`${phase}: endpoint needs auth but no key captured yet`);
     const auth = target.auth ?? {};
