@@ -86,15 +86,21 @@ export async function appendEvent(input: AppendEventInput): Promise<DocEvent> {
 
 export interface ListEventsResult {
   events: DocEvent[];
-  /** The doc's current head seq (max over all events), 0 if none. */
+  /**
+   * The cursor to resume from: the last DELIVERED event's seq, or `sinceSeq`
+   * unchanged when caught up. Deliberately NOT the doc head — deriving the
+   * resume point from a separate max(seq) query would let an event committed
+   * between the events scan and the head scan advance the cursor past an
+   * undelivered event, silently dropping it from the feed.
+   */
   latest: number;
 }
 
 /**
- * Events after `sinceSeq`, ascending, capped at `limit`. `latest` is the doc's
- * current head seq so a caller can resume from it (`?since=latest`) or detect
- * that it is caught up. When the result is truncated by `limit`, resume from the
- * last returned event's seq — not `latest` — to avoid skipping the tail.
+ * Events after `sinceSeq`, ascending, capped at `limit`. A single scan: the
+ * resume cursor is derived from the rows actually returned, so it can never
+ * skip an event (see `latest`). To start "from now", resolve the head with
+ * `headSeq` first.
  */
 export async function listEvents(opts: {
   docId: string;
@@ -112,11 +118,49 @@ export async function listEvents(opts: {
       .orderBy(asc(docEvents.seq))
       .limit(limit)
   ).map(toEvent);
-  const headRow = (
+  const latest = events.length ? events[events.length - 1]!.seq : opts.sinceSeq;
+  return { events, latest };
+}
+
+/** The doc's current head seq (max over all events), 0 if none. Use to resolve
+ * a "start from now" request before entering a long-poll. */
+export async function headSeq(docId: string): Promise<number> {
+  const row = (
     await db
       .select({ m: sql<number>`coalesce(max(${docEvents.seq}), 0)` })
       .from(docEvents)
-      .where(eq(docEvents.docId, opts.docId))
+      .where(eq(docEvents.docId, docId))
   )[0];
-  return { events, latest: Number(headRow?.m ?? 0) };
+  return Number(row?.m ?? 0);
+}
+
+/**
+ * Long-poll for new events: poll `listEvents` every `pollMs` until something
+ * lands after `sinceSeq`, the `waitMs` deadline passes, or `signal` aborts —
+ * then return the (possibly empty) batch. The single shared implementation
+ * behind both the HTTP `GET /events` route and the MCP `get_feedback` tool so
+ * their cadence/cursor logic can't drift apart.
+ */
+export async function waitForEvents(opts: {
+  docId: string;
+  sinceSeq: number;
+  waitMs: number;
+  pollMs?: number;
+  limit?: number;
+  signal?: AbortSignal;
+}): Promise<ListEventsResult> {
+  const pollMs = opts.pollMs ?? 500;
+  const deadline = Date.now() + Math.max(0, opts.waitMs);
+  for (;;) {
+    const res = await listEvents({
+      docId: opts.docId,
+      sinceSeq: opts.sinceSeq,
+      limit: opts.limit,
+    });
+    if (res.events.length > 0 || opts.signal?.aborted || Date.now() >= deadline)
+      return res;
+    await new Promise((r) =>
+      setTimeout(r, Math.min(pollMs, Math.max(0, deadline - Date.now()))),
+    );
+  }
 }

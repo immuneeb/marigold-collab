@@ -1,5 +1,5 @@
 import { eq } from "drizzle-orm";
-import { authorize, listEvents } from "@marigold/core";
+import { authorize, headSeq, waitForEvents } from "@marigold/core";
 import { db, docs } from "@marigold/db";
 import { currentActor } from "@/lib/actor";
 import { json } from "@/lib/http";
@@ -13,9 +13,6 @@ export const maxDuration = 60;
 type Params = { params: Promise<{ id: string }> };
 
 const MAX_WAIT_S = 50;
-const POLL_MS = 500;
-
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // Long-poll feedback feed for scripted/HTTP agents (the MCP `get_feedback` tool
 // is the same feed for MCP clients). View access, mirroring the content GET:
@@ -60,25 +57,22 @@ export async function GET(req: Request, { params }: Params) {
   );
 
   // `since=latest` starts the cursor at the current head, so only events created
-  // after this request are returned. `.latest` is max(seq) regardless of which
-  // rows come back, so we read it off a cheap probe (seq is int4 — never feed it
-  // an out-of-range sentinel).
+  // after this request are returned.
   let since: number;
   if (sinceParam === "latest") {
-    since = (await listEvents({ docId: id, sinceSeq: 0, limit: 1 })).latest;
+    since = await headSeq(id);
   } else {
     const n = Number.parseInt(sinceParam, 10);
     since = Number.isFinite(n) && n >= 0 ? n : 0;
   }
 
-  const deadline = Date.now() + wait * 1000;
-  for (;;) {
-    const { events, latest } = await listEvents({ docId: id, sinceSeq: since });
-    if (events.length > 0 || Date.now() >= deadline || req.signal?.aborted) {
-      // Resume from the last delivered event when truncated; else the head.
-      const cursor = events.length ? events[events.length - 1]!.seq : latest;
-      return json(200, { events, latest: cursor });
-    }
-    await sleep(POLL_MS);
-  }
+  // Shared long-poll loop; `latest` is the race-safe resume cursor (last
+  // delivered seq, or `since` when caught up — never skips an event).
+  const { events, latest } = await waitForEvents({
+    docId: id,
+    sinceSeq: since,
+    waitMs: wait * 1000,
+    signal: req.signal,
+  });
+  return json(200, { events, latest });
 }

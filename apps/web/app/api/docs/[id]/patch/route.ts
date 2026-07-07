@@ -8,6 +8,7 @@ import {
   type PatchOp,
   PatchError,
   quickDocExpiry,
+  StaleVersionError,
   updateDoc,
 } from "@marigold/core";
 import { db, docs } from "@marigold/db";
@@ -84,6 +85,10 @@ export async function POST(req: Request, { params }: Params) {
       html: newHtml,
       assistant: "patch",
       requireUnclaimed: quick, // key writes fail if the doc was claimed mid-flight
+      // CAS: patch was computed against targetVersionId; reject (409) rather
+      // than clobber a version committed in the read→patch→write window, even
+      // when the client didn't supply baseVersionId.
+      expectedLatestVersionId: targetVersionId,
     });
     // Rolling expiry: a successful unclaimed write buys another 30 days.
     // ownerId IS NULL guard: never re-stamp expiry onto a just-claimed doc.
@@ -111,6 +116,11 @@ export async function POST(req: Request, { params }: Params) {
   } catch (e) {
     if (e instanceof PatchError)
       return json(400, { error: e.code, message: e.message, ids: e.ids });
+    if (e instanceof StaleVersionError)
+      return json(409, {
+        error: "doc_changed",
+        message: "Doc changed since you loaded it — reload and reapply your patch.",
+      });
     if (e instanceof DocClaimedError)
       return json(403, { error: "claimed", hint: "The doc was claimed; the quick key no longer grants access." });
     if (e instanceof IngestError) return json(400, { error: e.message });

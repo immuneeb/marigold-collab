@@ -13,7 +13,7 @@ import { config, renderOriginFor } from "./env";
 import { ingest, type IngestResult, type InputFile } from "./ingest";
 import { type CommentAnchor, resolveAnchor } from "./instrument";
 import { makeSlug } from "./slug";
-import { getTheme, wrapWithTheme } from "./themes";
+import { getTheme, listThemes, ThemeError, wrapWithTheme } from "./themes";
 import type { BlobStore, Manifest } from "./types";
 
 function htmlOf(ing: IngestResult): string | null {
@@ -94,6 +94,11 @@ export interface UpdateDocInput {
   /** Quick-key writes only: fail with DocClaimedError if the doc has an owner
    * (checked again under the write lock, closing the check-then-claim race). */
   requireUnclaimed?: boolean;
+  /** Optimistic concurrency: if set, the write fails with StaleVersionError
+   * unless the doc's latest version is still this id when the row lock is taken.
+   * Read-modify-write callers (patch, inline-edit) pass the version they read so
+   * a concurrent commit in the read→write window can't be silently clobbered. */
+  expectedLatestVersionId?: string;
 }
 
 export interface VersionResult {
@@ -111,6 +116,60 @@ export interface VersionResult {
 
 function viewerUrl(slug: string): string {
   return `${config.appOrigin}/d/${slug}`;
+}
+
+const themeIds = () => listThemes().map((t) => t.id);
+
+/**
+ * Resolve the authoring inputs to the HTML to ingest, enforcing the theme
+ * contract so an agent's content is never silently dropped:
+ *  - theme + content  → wrap content in the theme (pin it)
+ *  - theme + html/files → error (the theme provides the shell; pick one)
+ *  - theme, no content  → error (nothing to wrap)
+ *  - content, no theme  → error (nothing to wrap it in; send html for raw)
+ *  - html/files, no theme → raw authoring, unchanged
+ * `themeOf` is the doc's already-pinned theme (updates); null for creates.
+ */
+function resolveAuthoring(
+  input: { html?: string; files?: InputFile[]; theme?: string; content?: string },
+  themeOf: string | null,
+): { html?: string; theme: string | null; themeVersion: number | null } {
+  const hasFiles = Array.isArray(input.files) && input.files.length > 0;
+  const hasContent =
+    typeof input.content === "string" && input.content.trim() !== "";
+
+  // Explicit theme on the request → themed authoring.
+  if (input.theme != null) {
+    const t = getTheme(input.theme); // throws unknown_theme
+    if (input.html != null || hasFiles)
+      throw new ThemeError(
+        "theme_conflicts_with_html",
+        "Send `content` with `theme`, not `html`/`files` — the theme provides the page shell.",
+        themeIds(),
+      );
+    if (!hasContent)
+      throw new ThemeError(
+        "content_required",
+        "A themed create needs non-empty `content` (the body HTML to wrap in the theme).",
+        themeIds(),
+      );
+    return { html: wrapWithTheme(input.content!, t.id), theme: t.id, themeVersion: t.version };
+  }
+
+  // Content-only against a doc that already has a pinned theme → re-wrap.
+  if (input.html == null && !hasFiles && input.content != null) {
+    if (!themeOf)
+      throw new ThemeError(
+        "content_needs_theme",
+        "`content` requires a `theme`. Send `html` for a raw self-contained page, or add a `theme`.",
+        themeIds(),
+      );
+    const t = getTheme(themeOf);
+    return { html: wrapWithTheme(input.content, t.id), theme: t.id, themeVersion: t.version };
+  }
+
+  // Raw html/files authoring — themeless (or leaves an existing pin untouched).
+  return { html: input.html, theme: null, themeVersion: null };
 }
 
 /** Write content-addressed blobs + the version manifest to storage. Idempotent. */
@@ -139,18 +198,11 @@ async function recordBlobRows(tx: Tx, ing: IngestResult): Promise<void> {
 
 export async function createDoc(input: CreateDocInput): Promise<VersionResult> {
   // Themed authoring: wrap the agent's semantic body content in the theme's
-  // stylesheet, and pin the theme+version on the doc. `getTheme` throws a
-  // ThemeError (surfaced by callers) on an unknown id. Raw html/files authoring
+  // stylesheet and pin the theme+version. resolveAuthoring enforces the
+  // theme/content/html contract (ThemeError, surfaced as 400 by callers) so an
+  // agent's html or content is never silently dropped. Raw html/files authoring
   // leaves the doc themeless — behaves exactly as before.
-  let html = input.html;
-  let theme: string | null = null;
-  let themeVersion: number | null = null;
-  if (input.theme != null) {
-    const t = getTheme(input.theme);
-    html = wrapWithTheme(input.content ?? "", t.id);
-    theme = t.id;
-    themeVersion = t.version;
-  }
+  const { html, theme, themeVersion } = resolveAuthoring(input, null);
 
   const ing = ingest({ html, files: input.files });
 
@@ -214,6 +266,18 @@ export class DocClaimedError extends Error {
   }
 }
 
+/** Thrown when an optimistic-concurrency write (expectedLatestVersionId) finds
+ * the doc has moved on — the caller must re-read and reapply (surfaced as 409). */
+export class StaleVersionError extends Error {
+  constructor(
+    public docId: string,
+    public currentVersionId: string | null,
+  ) {
+    super(`doc ${docId} changed since read (latest is ${currentVersionId})`);
+    this.name = "StaleVersionError";
+  }
+}
+
 export async function updateDoc(input: UpdateDocInput): Promise<VersionResult> {
   const doc = (
     await db.select().from(docs).where(eq(docs.id, input.docId)).limit(1)
@@ -221,14 +285,24 @@ export async function updateDoc(input: UpdateDocInput): Promise<VersionResult> {
   if (!doc) throw new Error(`doc not found: ${input.docId}`);
   if (input.requireUnclaimed && doc.ownerId !== null)
     throw new DocClaimedError(doc.id);
+  // Fast-fail CAS (also re-checked under the row lock below): if the caller read
+  // a version that is already stale, don't even ingest.
+  if (
+    input.expectedLatestVersionId != null &&
+    doc.latestVersionId !== input.expectedLatestVersionId
+  )
+    throw new StaleVersionError(doc.id, doc.latestVersionId);
 
-  // Content-only update of a themed doc: re-wrap `content` with the doc's pinned
-  // theme so the stored page stays self-contained without the agent resending
-  // the stylesheet. Sending `html`/`files` full-replaces the page as before.
-  let html = input.html;
-  if (input.html == null && input.files == null && input.content != null && doc.theme) {
-    html = wrapWithTheme(input.content, doc.theme);
-  }
+  // Resolve authoring inputs (theme contract enforced): content-only against a
+  // themed doc re-wraps in the pinned theme; html/files full-replace as before.
+  const authored = resolveAuthoring(input, doc.theme);
+  const html = authored.html;
+  // Re-pin only when we (re-)themed — a raw html/files replace leaves the
+  // existing pin untouched; a content-only re-wrap refreshes themeVersion so the
+  // pin always matches the CSS actually in the stored page.
+  const nextTheme = authored.theme != null ? authored.theme : doc.theme;
+  const nextThemeVersion =
+    authored.theme != null ? authored.themeVersion : doc.themeVersion;
 
   const ing = ingest({ html, files: input.files });
 
@@ -253,8 +327,8 @@ export async function updateDoc(input: UpdateDocInput): Promise<VersionResult> {
         ordinal: latest.ordinal,
         url: viewerUrl(doc.slug),
         unchanged: true,
-        theme: doc.theme,
-        themeVersion: doc.themeVersion,
+        theme: nextTheme,
+        themeVersion: nextThemeVersion,
       };
     }
   }
@@ -296,6 +370,15 @@ export async function updateDoc(input: UpdateDocInput): Promise<VersionResult> {
     if (input.requireUnclaimed && locked?.ownerId != null)
       throw new DocClaimedError(doc.id);
 
+    // Optimistic-concurrency CAS under the lock: a read-modify-write caller
+    // patched the version it read; if another write committed in between, the
+    // patch is stale and would silently clobber it — reject instead.
+    if (
+      input.expectedLatestVersionId != null &&
+      locked?.latestVersionId !== input.expectedLatestVersionId
+    )
+      throw new StaleVersionError(doc.id, locked?.latestVersionId ?? null);
+
     let versionId: string;
     let ordinal: number;
 
@@ -326,10 +409,19 @@ export async function updateDoc(input: UpdateDocInput): Promise<VersionResult> {
       await recordBlobRows(tx, ing);
     }
 
-    const set: { latestVersionId: string; publishedVersionId?: string } = {
-      latestVersionId: versionId,
-    };
+    const set: {
+      latestVersionId: string;
+      publishedVersionId?: string;
+      theme?: string | null;
+      themeVersion?: number | null;
+    } = { latestVersionId: versionId };
     if (input.autoPublish !== false) set.publishedVersionId = versionId;
+    // Persist the theme pin only when we (re-)themed this write, so themeVersion
+    // always matches the CSS in the stored page (a raw replace leaves it alone).
+    if (authored.theme != null) {
+      set.theme = nextTheme;
+      set.themeVersion = nextThemeVersion;
+    }
     await tx.update(docs).set(set).where(eq(docs.id, doc.id));
 
     return { versionId, ordinal };
@@ -348,8 +440,8 @@ export async function updateDoc(input: UpdateDocInput): Promise<VersionResult> {
     ordinal: result.ordinal,
     url: viewerUrl(doc.slug),
     unchanged: false,
-    theme: doc.theme,
-    themeVersion: doc.themeVersion,
+    theme: nextTheme,
+    themeVersion: nextThemeVersion,
   };
 }
 

@@ -14,15 +14,16 @@ import {
   type DocEvent,
   getBlobStore,
   IngestError,
-  listEvents,
   listThemes,
   MARIGOLD_DIGEST,
   type PatchOp,
   PatchError,
   renderOriginFor,
   roleCan,
+  StaleVersionError,
   ThemeError,
   updateDoc,
+  waitForEvents,
 } from "@marigold/core";
 import { comments, db, docs } from "@marigold/db";
 import { actorForUserId } from "@/lib/actor";
@@ -59,18 +60,26 @@ function fail(message: string) {
   };
 }
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
 // Resolve comment bodies for comment.* events so get_feedback returns the
-// actual feedback text (not just an id the agent would have to fetch). One
-// listComments query covers the whole batch.
+// actual feedback text (not just an id the agent would have to fetch). Fetch
+// only the referenced comments, so cost scales with new events not total
+// comment count.
 async function enrichEvents(
   docId: string,
   events: DocEvent[],
 ): Promise<unknown[]> {
-  const needsComments = events.some((e) => e.type.startsWith("comment."));
+  const ids = [
+    ...new Set(
+      events
+        .filter((e) => e.type.startsWith("comment."))
+        .map((e) =>
+          typeof e.payload?.commentId === "string" ? e.payload.commentId : null,
+        )
+        .filter((v): v is string => v !== null),
+    ),
+  ];
   const byId = new Map(
-    needsComments ? (await listComments(docId)).map((c) => [c.id, c]) : [],
+    ids.length ? (await listComments(docId, { ids })).map((c) => [c.id, c]) : [],
   );
   return events.map((e) => {
     const commentId =
@@ -653,19 +662,13 @@ const baseHandler = createMcpHandler(
 
         const since = sinceSeq ?? 0;
         const wait = Math.min(Math.max(waitSeconds ?? 30, 0), 50);
-        const deadline = Date.now() + wait * 1000;
-        for (;;) {
-          const { events, latest } = await listEvents({ docId, sinceSeq: since });
-          if (events.length > 0 || Date.now() >= deadline) {
-            // Resume from the last delivered event when truncated; else the head.
-            const cursor = events.length ? events[events.length - 1]!.seq : latest;
-            return ok({
-              events: await enrichEvents(docId, events),
-              latest: cursor,
-            });
-          }
-          await sleep(500);
-        }
+        // Shared long-poll loop; `latest` is the race-safe resume cursor.
+        const { events, latest } = await waitForEvents({
+          docId,
+          sinceSeq: since,
+          waitMs: wait * 1000,
+        });
+        return ok({ events: await enrichEvents(docId, events), latest });
       },
     );
 
@@ -699,7 +702,8 @@ const baseHandler = createMcpHandler(
         if (!doc) return fail("doc not found");
         // Clean HTML round-trips to the SAME ids (they're structural), so
         // applyPatchOps re-instruments to exactly the ids the ops reference.
-        const html = await currentHtmlOf(doc.latestVersionId);
+        const base = doc.latestVersionId;
+        const html = await currentHtmlOf(base);
         if (!html) return fail("doc has no content to patch");
         try {
           const newHtml = applyPatchOps(html, ops as unknown as PatchOp[]);
@@ -707,6 +711,9 @@ const baseHandler = createMcpHandler(
             docId,
             html: newHtml,
             assistant: "mcp-patch",
+            // CAS: the patch was computed against `base`; if another write
+            // landed in the read→write window, reject rather than clobber it.
+            expectedLatestVersionId: base ?? undefined,
           });
           // Feedback feed: a patch replaces content (skip no-op writes).
           if (!r.unchanged)
@@ -727,6 +734,10 @@ const baseHandler = createMcpHandler(
           });
         } catch (e) {
           if (e instanceof PatchError) return fail(e.message);
+          if (e instanceof StaleVersionError)
+            return fail(
+              "doc changed since you read it (a concurrent edit landed) — call get_doc with includeIds:true again and re-apply your patch",
+            );
           if (e instanceof IngestError) return fail(e.message);
           throw e;
         }

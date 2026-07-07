@@ -26,7 +26,12 @@ export interface Theme {
 /** Thrown when a caller names a theme that isn't in the registry. */
 export class ThemeError extends Error {
   constructor(
-    public code: "unknown_theme",
+    public code:
+      | "unknown_theme"
+      // themed authoring contract violations (surfaced as 400s by callers):
+      | "content_required" // theme given but no/empty content to wrap
+      | "content_needs_theme" // content given but no theme to wrap it in
+      | "theme_conflicts_with_html", // theme given together with html/files
     message: string,
     /** The ids a caller may choose from, for a self-correcting error. */
     public validThemeIds: string[],

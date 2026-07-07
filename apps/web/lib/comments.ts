@@ -1,4 +1,4 @@
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import { comments, db, docVersions, newId, users } from "@marigold/db";
 
 export interface CommentRow {
@@ -82,12 +82,16 @@ export async function replyToComment(opts: {
 
 export async function listComments(
   docId: string,
-  filter?: { status?: string; assignedToAi?: boolean },
+  filter?: { status?: string; assignedToAi?: boolean; ids?: string[] },
 ): Promise<CommentRow[]> {
+  // `ids` empty means "no comments requested" — short-circuit rather than emit a
+  // vacuous `IN ()` that some drivers reject or that scans the whole doc.
+  if (filter?.ids && filter.ids.length === 0) return [];
   const conds = [eq(comments.docId, docId)];
   if (filter?.status) conds.push(eq(comments.status, filter.status));
   if (filter?.assignedToAi !== undefined)
     conds.push(eq(comments.assignedToAi, filter.assignedToAi));
+  if (filter?.ids) conds.push(inArray(comments.id, filter.ids));
   return db
     .select({
       id: comments.id,

@@ -89,11 +89,18 @@ export async function POST(req: Request) {
     });
   }
   // Two authoring modes: raw `html`, or a built-in `theme` + semantic `content`.
+  // Reject a request with nothing to create BEFORE rate-limiting so a mistake
+  // never silently makes a blank doc or burns the caller's daily budget.
   const themed = typeof body.theme === "string";
-  if (!themed && (typeof body.html !== "string" || body.html.length === 0)) {
+  const hasHtml = typeof body.html === "string" && body.html.length > 0;
+  const hasContent =
+    typeof body.content === "string" && body.content.trim().length > 0;
+  if (!hasHtml && !(themed && hasContent)) {
     return json(400, {
-      error: "html_required",
-      hint: "Provide `html` (one self-contained page ≤2MB; inline all CSS/JS/SVG) — or `theme` + `content` (body inner HTML) to have the server style it. External scripts, fonts, and images are blocked by CSP.",
+      error: themed ? "content_required" : "html_required",
+      hint: themed
+        ? "A themed doc needs non-empty `content` (the body inner HTML to wrap in the theme)."
+        : "Provide `html` (one self-contained page ≤2MB; inline all CSS/JS/SVG) — or `theme` + `content` (body inner HTML) to have the server style it. External scripts, fonts, and images are blocked by CSP.",
     });
   }
 
