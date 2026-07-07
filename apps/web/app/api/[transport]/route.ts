@@ -2,6 +2,7 @@ import { createMcpHandler, withMcpAuth } from "mcp-handler";
 import { z } from "zod";
 import { and, desc, eq, ne, sql } from "drizzle-orm";
 import {
+  applyPatchOps,
   authorize,
   buildAddressFeedbackPrompt,
   buildAnalyzePrompt,
@@ -13,6 +14,8 @@ import {
   getBlobStore,
   IngestError,
   MARIGOLD_DIGEST,
+  type PatchOp,
+  PatchError,
   renderOriginFor,
   roleCan,
   updateDoc,
@@ -491,6 +494,62 @@ const baseHandler = createMcpHandler(
         if (!allowed) return fail("not authorized");
         await setCommentStatus(commentId, "resolved");
         return ok({ ok: true });
+      },
+    );
+
+    // ---- patch_doc (registered last to localize merge conflicts) ----------
+    // Small-payload update path: send only the elements that changed, keyed by
+    // their data-marigold-id, instead of re-transmitting the whole page.
+    server.registerTool(
+      "patch_doc",
+      {
+        title: "Patch doc",
+        description:
+          "Update a doc by sending ONLY the elements that changed, keyed by their data-marigold-id — much cheaper than update_doc for small edits (a few hundred tokens vs re-sending the whole page). Prefer this over update_doc whenever you're changing a handful of elements in an existing doc; use update_doc for a full rewrite or a brand-new page. Ops apply atomically (an unknown id fails the whole patch) and comments re-anchor as usual. ops is an array of: {op:\"replace\", marigoldId, html} (replace an element's inner content), {op:\"setText\", marigoldId, text} (replace text, auto-escaped), {op:\"append\", marigoldId, html} (insert markup right after the element), {op:\"remove\", marigoldId}. Example: [{\"op\":\"setText\",\"marigoldId\":\"mg-1a2b3c4d5e\",\"text\":\"Q3 revenue: $4.2M\"},{\"op\":\"append\",\"marigoldId\":\"mg-9f8e7d6c5b\",\"html\":\"<p>Updated 2026-07-07.</p>\"}].",
+        inputSchema: {
+          docId: z.string(),
+          ops: z
+            .array(z.record(z.string(), z.unknown()))
+            .describe(
+              'Element ops keyed by marigoldId, e.g. [{"op":"replace","marigoldId":"mg-xxxxxxxxxx","html":"..."}]',
+            ),
+        },
+      },
+      async ({ docId, ops }, extra: ToolExtra) => {
+        const userId = userIdOf(extra);
+        if (!userId) return fail("unauthenticated");
+        const actor = await actorForUserId(userId);
+        const { ok: allowed } = await authorize(docId, actor, "update");
+        if (!allowed) return fail("not authorized to update this doc");
+        const doc = (
+          await db.select().from(docs).where(eq(docs.id, docId)).limit(1)
+        )[0];
+        if (!doc) return fail("doc not found");
+        // Clean HTML round-trips to the SAME ids (they're structural), so
+        // applyPatchOps re-instruments to exactly the ids the ops reference.
+        const html = await currentHtmlOf(doc.latestVersionId);
+        if (!html) return fail("doc has no content to patch");
+        try {
+          const newHtml = applyPatchOps(html, ops as unknown as PatchOp[]);
+          const r = await updateDoc({
+            docId,
+            html: newHtml,
+            assistant: "mcp-patch",
+          });
+          return ok({
+            docId: r.docId,
+            slug: r.slug,
+            url: r.url,
+            versionId: r.versionId,
+            ordinal: r.ordinal,
+            unchanged: r.unchanged,
+            applied: (ops as unknown[]).length,
+          });
+        } catch (e) {
+          if (e instanceof PatchError) return fail(e.message);
+          if (e instanceof IngestError) return fail(e.message);
+          throw e;
+        }
       },
     );
   },

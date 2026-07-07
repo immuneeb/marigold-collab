@@ -84,7 +84,9 @@ export interface InlineEdit {
   html: string;
 }
 
-const MGID_RE = /^mg-[0-9a-f]{10}$/;
+/** A well-formed injected id: `mg-` + 10 hex. Also gates selector injection —
+ * applyInlineEdits and applyPatchOps only ever interpolate ids that match. */
+export const MGID_RE = /^mg-[0-9a-f]{10}$/;
 
 /**
  * Apply in-place edits to doc source. The stored HTML is first instrumented

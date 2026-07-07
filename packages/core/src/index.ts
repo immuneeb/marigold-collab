@@ -3,6 +3,7 @@ export * from "./types";
 export * from "./hash";
 export * from "./ingest";
 export * from "./instrument";
+export * from "./patch";
 export * from "./slug";
 export * from "./acl";
 export * from "./quick";

@@ -167,8 +167,9 @@ load-bearing diagrams, three reading depths.
 2. Authoring docs: a doc is one self-contained HTML page. Inline all
 CSS/JS/SVG; images as data: URIs; external scripts, fonts, and images are
 blocked by CSP and fail silently. Keep DOM structure stable across updates so
-readers' comments re-anchor. After sharing, check get_comments, revise with
-update_doc, then resolve_comment.
+readers' comments re-anchor. For small edits prefer patch_doc (send only the
+changed elements by marigoldId) over re-sending the whole page. After sharing,
+check get_comments, revise, then resolve_comment.
 
 3. Feedback loop: editors can assign comments to AI (✨). When the user asks
 to address comments or AI feedback: list_docs shows openAiComments per doc;

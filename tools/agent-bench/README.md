@@ -91,7 +91,8 @@ tools/agent-bench/
   targets/
     smde.json          simplemarkdowneditor.com — live, verified 2026-07-05
     marigold-mcp.json  Marigold MCP server — live, runs via prompts/cold-start.md
-    marigold-http.json PENDING — planned quick-start door, fails until it ships
+    marigold-http.json Marigold HTTP quick-start door — full-page PUT update
+    marigold-http-patch.json  same as above but UPDATE POSTs a small ops patch
   tasks/               fixtures: {small,medium,large}.{html,md} + {size}.revision.json
                        (~1KB / ~30KB / ~100KB, size-matched per format)
   prompts/
@@ -120,6 +121,44 @@ Flags: `--repeats N` (default 3), `--size small|medium|large` (default small),
 `--no-discovery` (steady-state). Exit code is non-zero if any phase of any
 repeat fails. Each invocation writes a JSON into `results/` and prints a
 markdown summary of phase medians (wall + wire).
+
+## Patch vs full-replace comparison
+
+`update_doc` / `PUT /api/docs/:id/content` re-transmit the whole page every
+edit; `POST /api/docs/:id/patch` sends only the elements that changed (ops keyed
+by `data-marigold-id`). To measure the win, run the two targets back to back —
+same size, same base URL, same repeats — and diff the **UPDATE** phase:
+
+```sh
+# full-replace baseline (PUT the whole page)
+node tools/agent-bench/run-http.mjs --target targets/marigold-http.json \
+  --size small --base-url http://localhost:3100 --repeats 5
+# patch (POST only the changed ops)
+node tools/agent-bench/run-http.mjs --target targets/marigold-http-patch.json \
+  --size small --base-url http://localhost:3100 --repeats 5
+```
+
+Everything except UPDATE is identical between the two targets, so the UPDATE
+wire/wall median delta (and the `content_bytes` the update sent) is the patch
+impact. **Promotion criterion:** patch ops promote if UPDATE wall-clock improves
+≥2× vs full-content update at ≥30KB docs (medium + large fixtures).
+
+The ops in `marigold-http-patch.json` are hardcoded because the runner's generic
+`{content}` substitution can't derive structural marigoldIds from a fixture —
+they're calibrated to `small.html`. For `--size medium|large`, recompute the two
+ids first (they're deterministic from DOM structure) and update the target's
+`update.body.template.ops`:
+
+```sh
+# prints the status-cell + footer-p marigoldIds for a fixture
+node -e 'import("./packages/core/src/instrument.ts").then(async ({instrumentHtml})=>{const {parse}=await import("node-html-parser");const fs=await import("node:fs");const root=parse(instrumentHtml(fs.readFileSync(process.argv[1],"utf8")),{comment:true});console.log("replace:",root.querySelector("[data-bench=rev-target]")?.getAttribute("data-marigold-id"));console.log("append:",root.querySelector("p.footer")?.getAttribute("data-marigold-id"));})' \
+  tools/agent-bench/tasks/medium.html   # run via tsx/pnpm so the .ts import resolves
+```
+
+(Run that through `tsx` — e.g. `pnpm --filter @marigold/core exec tsx …` — since it
+imports the TypeScript source.) This target is marked PENDING until
+`/api/docs/:id/patch` is deployed to prod; until then always pass
+`--base-url http://localhost:3100`.
 
 ## Running a cold-start or MCP benchmark
 
