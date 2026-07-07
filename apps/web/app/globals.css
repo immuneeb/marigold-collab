@@ -84,6 +84,15 @@ h1 {
   background: var(--card);
   text-align: center;
 }
+/* expired quick doc: a distinct, restorable-via-claim state */
+.empty-expired {
+  border-style: solid;
+  border-color: #e8c4c0;
+  background: #fdf0ef;
+}
+.empty-expired strong {
+  color: #b3261e;
+}
 
 .card {
   width: 360px;
@@ -383,17 +392,87 @@ textarea {
   white-space: nowrap;
 }
 
-/* quick-doc banner: link-holders can edit; claim to keep it */
-.quickbar {
+/* unclaimed quick-doc banner: expiry countdown + claim CTA. Link-holders can
+   edit; claiming keeps the doc and hands them access control. Color escalates
+   by time-remaining tier, always paired with wording (never color alone). */
+.claimbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 6px 14px;
-  background: var(--accent-soft);
+  gap: 16px;
+  padding: 8px 16px;
   border-bottom: 1px solid var(--line);
   font-size: 13px;
+}
+.claimbar-msg {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.claimbar-headline {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 7px;
+  font-size: 13.5px;
+}
+.claimbar-headline strong {
+  font-weight: 650;
+}
+.claimbar-icon {
+  align-self: center;
+}
+.claimbar-when {
+  font-variant-numeric: tabular-nums;
+}
+.claimbar-count {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.claimbar-explain {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+.claimbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.claimbar-cta {
+  white-space: nowrap;
+}
+.claimbar-dismiss {
+  padding: 6px 9px;
+}
+
+/* comfortable (>7d): calm, matches the resting accent tone */
+.claimbar-comfortable {
+  background: var(--accent-soft);
   color: var(--marigold-dark);
+}
+/* soon (24h–7d): amber, a stronger nudge */
+.claimbar-soon {
+  background: #fbe6c2;
+  color: #92560a;
+  border-bottom-color: var(--marigold);
+}
+/* urgent (<24h): red, and the CTA turns red to match */
+.claimbar-urgent {
+  background: #fdece9;
+  color: #a3160f;
+  border-bottom-color: #d14b3f;
+}
+.claimbar-urgent .claimbar-explain {
+  color: #a3160f;
+  opacity: 0.85;
+}
+.claimbar-urgent .claimbar-cta {
+  background: #b3261e;
+}
+.claimbar-urgent .claimbar-cta:hover {
+  background: #8f1d17;
 }
 
 /* in-place editing save bar (errors only) */

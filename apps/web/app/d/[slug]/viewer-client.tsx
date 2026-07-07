@@ -34,7 +34,8 @@ export function ViewerClient(props: {
   signedIn: boolean;
   // Unclaimed quick doc opened via its ?k= URL: the key authorizes saves
   // (sent as X-Marigold-Key) and the banner offers graduation into an account.
-  quick?: { editKey: string; claimUrl: string };
+  // `expiresAt` (ISO) drives the expiry countdown + urgency tiers in the banner.
+  quick?: { editKey: string; claimUrl: string; expiresAt: string | null };
 }) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [comments, setComments] = useState<Comment[]>([]);
@@ -45,7 +46,6 @@ export function ViewerClient(props: {
   const [selected, setSelected] = useState<string | null>(null);
   const [open, setOpen] = useState(true);
   const [showResolved, setShowResolved] = useState(false);
-  const [quickBanner, setQuickBanner] = useState(!!props.quick);
   // Auto-save machinery: edits stream in from the agent, get queued, and flush
   // serially; each save rolls a new version, so we chain versionId forward.
   const versionIdRef = useRef(props.versionId);
@@ -383,25 +383,11 @@ export function ViewerClient(props: {
         </div>
       </header>
 
-      {props.quick && quickBanner && (
-        <div className="quickbar">
-          <span>
-            ⚡ Quick doc — anyone with this link can edit it, and it expires if
-            unclaimed. Claim it to keep it and control access.
-          </span>
-          <span className="savebar-actions">
-            <Link href={props.quick.claimUrl} className="btn btn-inline">
-              Claim
-            </Link>
-            <button
-              className="btn-ghost"
-              onClick={() => setQuickBanner(false)}
-              aria-label="Dismiss"
-            >
-              ✕
-            </button>
-          </span>
-        </div>
+      {props.quick && (
+        <ClaimBanner
+          claimUrl={props.quick.claimUrl}
+          expiresAt={props.quick.expiresAt}
+        />
       )}
 
       {saveState === "error" && (
@@ -546,6 +532,143 @@ export function ViewerClient(props: {
               </div>
             )}
           </aside>
+        )}
+      </div>
+    </div>
+  );
+}
+
+const MINUTE = 60_000;
+const HOUR = 60 * MINUTE;
+const DAY = 24 * HOUR;
+
+type ExpiryTier = "comfortable" | "soon" | "urgent";
+
+// >7d calm, 24h–7d amber, <24h red. Callers still pair the color with words.
+function expiryTier(remaining: number): ExpiryTier {
+  if (remaining < DAY) return "urgent";
+  if (remaining < 7 * DAY) return "soon";
+  return "comfortable";
+}
+
+// "in 42 minutes" / "in 6 hours" / "in 29 days". Nearest whole unit; the
+// threshold uses raw remaining so the unit label and tier never disagree.
+function formatCountdown(remaining: number): string {
+  if (remaining <= 0) return "now";
+  if (remaining < HOUR) {
+    const m = Math.max(1, Math.round(remaining / MINUTE));
+    return `in ${m} minute${m === 1 ? "" : "s"}`;
+  }
+  if (remaining < DAY) {
+    const h = Math.round(remaining / HOUR);
+    return `in ${h} hour${h === 1 ? "" : "s"}`;
+  }
+  const d = Math.round(remaining / DAY);
+  return `in ${d} day${d === 1 ? "" : "s"}`;
+}
+
+function sameCalendarDay(a: number, b: number): boolean {
+  const x = new Date(a);
+  const y = new Date(b);
+  return (
+    x.getFullYear() === y.getFullYear() &&
+    x.getMonth() === y.getMonth() &&
+    x.getDate() === y.getDate()
+  );
+}
+
+// Unclaimed quick-doc banner: shows the localized expiry date + a live relative
+// countdown, escalates color/wording as expiry nears, and pushes the claim CTA
+// (claiming is how the holder keeps the doc and controls access). `expiresAt`
+// is an ISO string; all time math is client-only to avoid an SSR timezone
+// mismatch — the first render (server + client) is the calm `now == null` shell.
+function ClaimBanner({
+  claimUrl,
+  expiresAt,
+}: {
+  claimUrl: string;
+  expiresAt: string | null;
+}) {
+  const expMs = useMemo(
+    () => (expiresAt ? Date.parse(expiresAt) : null),
+    [expiresAt],
+  );
+  const [now, setNow] = useState<number | null>(null);
+  const [dismissed, setDismissed] = useState(false);
+
+  useEffect(() => {
+    setNow(Date.now());
+    const iv = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(iv);
+  }, []);
+
+  const remaining = now != null && expMs != null ? expMs - now : null;
+  // Pre-mount (now == null) and no-expiry cases render calm; useEffect fills in
+  // the real tier right after hydration.
+  const tier: ExpiryTier =
+    remaining == null ? "comfortable" : expiryTier(remaining);
+  const urgent = tier === "urgent";
+
+  // Dismissable while there's slack; re-asserts (no dismiss) once urgent so an
+  // expiring doc is never silently lost.
+  if (dismissed && !urgent) return null;
+
+  const absolute =
+    now != null && expMs != null
+      ? new Date(expMs).toLocaleString(undefined, {
+          dateStyle: "medium",
+          timeStyle: "short",
+        })
+      : null;
+  const countdown = remaining != null ? formatCountdown(remaining) : null;
+
+  const headline =
+    expMs == null
+      ? "Expires if left unclaimed"
+      : tier === "comfortable"
+        ? "Expires"
+        : tier === "soon"
+          ? "Expires soon"
+          : now != null && sameCalendarDay(now, expMs)
+            ? "Expiring today"
+            : "Expiring soon";
+
+  return (
+    <div
+      className={`claimbar claimbar-${tier}`}
+      role="region"
+      aria-label="Quick doc expiry and claim"
+    >
+      <div className="claimbar-msg">
+        <div className="claimbar-headline">
+          <span className="claimbar-icon" aria-hidden="true">
+            {urgent ? "⏳" : "⚡"}
+          </span>
+          <strong>{headline}</strong>
+          {absolute && (
+            <time className="claimbar-when" dateTime={expiresAt ?? undefined}>
+              {absolute}
+            </time>
+          )}
+          {countdown && <span className="claimbar-count">· {countdown}</span>}
+        </div>
+        <div className="claimbar-explain">
+          This is a quick doc — anyone with the link can edit, and it disappears
+          when it expires. Claim it to keep it and control access.
+        </div>
+      </div>
+      <div className="claimbar-actions">
+        <Link href={claimUrl} className="btn btn-inline claimbar-cta">
+          Create account or log in to claim
+        </Link>
+        {!urgent && (
+          <button
+            className="btn-ghost claimbar-dismiss"
+            onClick={() => setDismissed(true)}
+            aria-label="Dismiss"
+          >
+            ✕
+          </button>
         )}
       </div>
     </div>
