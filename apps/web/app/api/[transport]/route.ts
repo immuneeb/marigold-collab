@@ -300,6 +300,14 @@ const baseHandler = createMcpHandler(
         if (!allowed) return fail("not authorized to update this doc");
         try {
           const r = await updateDoc({ docId, html, content, title, assistant: "mcp" });
+          // Feedback feed: content was replaced (skip no-op writes).
+          if (!r.unchanged)
+            await emitDocEvent({
+              docId,
+              type: "content.replaced",
+              actor: userId,
+              payload: { versionId: r.versionId, ordinal: r.ordinal },
+            });
           return ok({
             docId: r.docId,
             slug: r.slug,
@@ -700,6 +708,14 @@ const baseHandler = createMcpHandler(
             html: newHtml,
             assistant: "mcp-patch",
           });
+          // Feedback feed: a patch replaces content (skip no-op writes).
+          if (!r.unchanged)
+            await emitDocEvent({
+              docId,
+              type: "content.replaced",
+              actor: userId,
+              payload: { versionId: r.versionId, ordinal: r.ordinal },
+            });
           return ok({
             docId: r.docId,
             slug: r.slug,
