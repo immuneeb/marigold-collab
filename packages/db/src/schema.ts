@@ -77,6 +77,12 @@ export const docs = pgTable("docs", {
   // Unclaimed quick docs expire (rolling ~30 days after last write); enforced
   // on read+write, extended on each successful write, cleared on claim.
   expiresAt: timestamp("expires_at", { withTimezone: true }),
+  // Theme packs: when set, the doc was authored as semantic body content wrapped
+  // in a built-in theme's stylesheet at ingest (packages/core themes.ts), so
+  // updates can stay content-only. Null = raw full-HTML authoring. themeVersion
+  // pins the theme's CSS version used at create. Additive/nullable, no backfill.
+  theme: text("theme"),
+  themeVersion: integer("theme_version"),
   createdAt: createdAt(),
 });
 

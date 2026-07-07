@@ -83,7 +83,8 @@ export async function GET(req: Request, { params }: Params) {
       return json(404, { error: "no_content", hint: "Doc has no versions yet." });
     const payload = await versionPayload(versionId, doc.title);
     if (!payload) return json(404, { error: "content_missing" });
-    return json(200, payload);
+    // Surface the pinned theme so an agent knows it can send content-only writes.
+    return json(200, { ...payload, theme: doc.theme, themeVersion: doc.themeVersion });
   }
 
   // Otherwise the normal account ACL — unchanged from every other endpoint.
@@ -109,7 +110,7 @@ export async function GET(req: Request, { params }: Params) {
     return json(404, { error: "no_content", hint: "Doc has no published version." });
   const payload = await versionPayload(versionId, doc.title);
   if (!payload) return json(404, { error: "content_missing" });
-  return json(200, payload);
+  return json(200, { ...payload, theme: doc.theme, themeVersion: doc.themeVersion });
 }
 
 export async function PUT(req: Request, { params }: Params) {

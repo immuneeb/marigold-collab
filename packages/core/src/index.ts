@@ -2,6 +2,7 @@ export * from "./env";
 export * from "./types";
 export * from "./hash";
 export * from "./ingest";
+export * from "./themes";
 export * from "./instrument";
 export * from "./slug";
 export * from "./acl";
