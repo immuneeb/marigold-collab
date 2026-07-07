@@ -39,7 +39,11 @@ const HINTS = {
     "Writes need the doc's edit key: ?k=<key> or the X-Marigold-Key header. Keys come from POST /api/quick; claimed docs are edited through the owner's account instead.",
 };
 
-async function versionPayload(versionId: string, title: string | null) {
+async function versionPayload(
+  versionId: string,
+  title: string | null,
+  keepIds = false,
+) {
   const store = getBlobStore();
   const manifest = await store.getManifest(versionId);
   const sha = manifest?.["index.html"];
@@ -52,8 +56,11 @@ async function versionPayload(versionId: string, title: string | null) {
       .where(eq(docVersions.id, versionId))
       .limit(1)
   )[0];
+  const raw = new TextDecoder().decode(bytes);
   return {
-    html: deinstrumentHtml(new TextDecoder().decode(bytes)),
+    // keepIds keeps each element's data-marigold-id so the caller can target
+    // it with POST /api/docs/:id/patch; default returns clean HTML.
+    html: keepIds ? raw : deinstrumentHtml(raw),
     title,
     versionId,
     ordinal: version?.ordinal ?? null,
@@ -75,13 +82,17 @@ export async function GET(req: Request, { params }: Params) {
 
   const key = requestQuickKey(req);
   const access = quickAccess(doc, key);
+  // ?includeIds=1 returns instrumented HTML (marigold-ids intact) so the caller
+  // can target elements with POST /api/docs/:id/patch.
+  const includeIds =
+    new URL(req.url).searchParams.get("includeIds") === "1";
 
   // A live quick key reads the working draft (the key IS the edit capability).
   if (access === "granted") {
     const versionId = doc.latestVersionId ?? doc.publishedVersionId;
     if (!versionId)
       return json(404, { error: "no_content", hint: "Doc has no versions yet." });
-    const payload = await versionPayload(versionId, doc.title);
+    const payload = await versionPayload(versionId, doc.title, includeIds);
     if (!payload) return json(404, { error: "content_missing" });
     // Surface the pinned theme so an agent knows it can send content-only writes.
     return json(200, { ...payload, theme: doc.theme, themeVersion: doc.themeVersion });
@@ -102,13 +113,14 @@ export async function GET(req: Request, { params }: Params) {
       hint: "Sign in with an account that has access, or pass the doc's quick key (?k= / X-Marigold-Key) if it is unclaimed.",
     });
   }
-  const versionId =
-    role && roleCan(role, "update")
-      ? (doc.latestVersionId ?? doc.publishedVersionId)
-      : doc.publishedVersionId;
+  const canUpdate = !!role && roleCan(role, "update");
+  const versionId = canUpdate
+    ? (doc.latestVersionId ?? doc.publishedVersionId)
+    : doc.publishedVersionId;
   if (!versionId)
     return json(404, { error: "no_content", hint: "Doc has no published version." });
-  const payload = await versionPayload(versionId, doc.title);
+  // Ids only for update-capable roles (they're the ones who can patch).
+  const payload = await versionPayload(versionId, doc.title, includeIds && canUpdate);
   if (!payload) return json(404, { error: "content_missing" });
   return json(200, { ...payload, theme: doc.theme, themeVersion: doc.themeVersion });
 }

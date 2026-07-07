@@ -100,15 +100,21 @@ async function enrichEvents(
   });
 }
 
-async function currentHtmlOf(latestVersionId: string | null): Promise<string | null> {
+async function currentHtmlOf(
+  latestVersionId: string | null,
+  keepIds = false,
+): Promise<string | null> {
   if (!latestVersionId) return null;
   const store = getBlobStore();
   const manifest = await store.getManifest(latestVersionId);
   const sha = manifest?.["index.html"];
   if (!sha) return null;
   const bytes = await store.getBlob(sha);
-  // Return clean HTML — strip Marigold's injected ids + agent.
-  return bytes ? deinstrumentHtml(new TextDecoder().decode(bytes)) : null;
+  if (!bytes) return null;
+  const raw = new TextDecoder().decode(bytes);
+  // keepIds: return the instrumented HTML so an agent can see each element's
+  // data-marigold-id and target it with patch_doc. Default strips ids + agent.
+  return keepIds ? raw : deinstrumentHtml(raw);
 }
 
 // Built-in theme ids, for the create_doc description (kept in sync with the
@@ -364,10 +370,19 @@ const baseHandler = createMcpHandler(
       "get_doc",
       {
         title: "Get doc",
-        description: "Read a doc's metadata, URL, and current HTML.",
-        inputSchema: { docId: z.string() },
+        description:
+          "Read a doc's metadata, URL, and current HTML. Pass includeIds:true to get the HTML with each element's data-marigold-id intact — you need those ids to target elements with patch_doc.",
+        inputSchema: {
+          docId: z.string(),
+          includeIds: z
+            .boolean()
+            .optional()
+            .describe(
+              "Return HTML with data-marigold-id attributes so you can target elements with patch_doc (default false = clean HTML).",
+            ),
+        },
       },
-      async ({ docId }, extra: ToolExtra) => {
+      async ({ docId, includeIds }, extra: ToolExtra) => {
         const userId = userIdOf(extra);
         if (!userId) return fail("unauthenticated");
         const actor = await actorForUserId(userId);
@@ -384,6 +399,7 @@ const baseHandler = createMcpHandler(
           canUpdate
             ? doc.latestVersionId
             : doc.publishedVersionId,
+          includeIds === true && canUpdate,
         );
         return ok({
           docId: doc.id,
