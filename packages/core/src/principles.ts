@@ -174,7 +174,9 @@ update_doc, then resolve_comment.
 to address comments or AI feedback: list_docs shows openAiComments per doc;
 get_comments with assignedToAi=true returns the queue; make the edits with
 update_doc, reply_to_comment with a one-line summary of the change, then
-resolve_comment. The address_feedback prompt runs this end to end.`;
+resolve_comment. The address_feedback prompt runs this end to end. To watch a
+doc live, call get_feedback — it blocks until a human comment or change lands
+(returning the comment text), so you can respond in the same turn.`;
 
 const DEFAULT_AUDIENCE = "a sharp generalist who does not know this domain's jargon";
 

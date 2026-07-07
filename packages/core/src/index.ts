@@ -7,6 +7,7 @@ export * from "./slug";
 export * from "./acl";
 export * from "./quick";
 export * from "./versioning";
+export * from "./events";
 export * from "./tokens";
 export * from "./blobs";
 export * from "./render";
