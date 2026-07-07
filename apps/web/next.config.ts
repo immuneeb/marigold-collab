@@ -7,10 +7,20 @@ import type { NextConfig } from "next";
 // has sane local defaults, so the app boots with no .env at all.
 loadEnv({ path: resolve(process.cwd(), "../../.env") });
 
+// Agent discovery: doc and docs-API responses point at the HTTP reference.
+const serviceDoc = [{ key: "Link", value: '</agents.md>; rel="service-doc"' }];
+
 const nextConfig: NextConfig = {
   // Compile the workspace TS packages (they ship raw source).
   // The app talks to Postgres over the wire (postgres.js) — no WASM DB bundled.
   transpilePackages: ["@marigold/db", "@marigold/core"],
+  async headers() {
+    return [
+      { source: "/d/:path*", headers: serviceDoc },
+      { source: "/api/docs/:path*", headers: serviceDoc },
+      { source: "/api/quick", headers: serviceDoc },
+    ];
+  },
 };
 
 export default nextConfig;
