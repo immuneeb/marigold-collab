@@ -56,9 +56,9 @@ export const docs = pgTable("docs", {
   slug: text("slug").notNull().unique(), // human-facing app path segment
   // Unguessable DNS label for the render origin: d-<renderId>.<base host>.
   renderId: text("render_id").notNull().unique(),
-  ownerId: text("owner_id")
-    .notNull()
-    .references(() => users.id),
+  // Null = unclaimed quick doc (the ?k= URL is the capability). Claiming sets
+  // the owner and burns the key; owned docs behave exactly as before.
+  ownerId: text("owner_id").references(() => users.id),
   // Movable refs into the version chain. Plain text (not FK) to avoid a
   // circular constraint with doc_versions; integrity enforced in app logic.
   latestVersionId: text("latest_version_id"), // assistant's most recent write
@@ -69,6 +69,14 @@ export const docs = pgTable("docs", {
   isPublic: boolean("is_public").notNull().default(false),
   // Kill switch (CEO-review hardening): instantly quarantine a malicious doc.
   quarantined: boolean("quarantined").notNull().default(false),
+  // Quick docs (the zero-barrier HTTP door): sha256 hex of the 22-char base62
+  // edit key carried in the doc URL (?k=). Never the key itself. Null on
+  // owned/claimed docs — presenting a burned key grants nothing.
+  quickKeyHash: text("quick_key_hash"),
+  claimedAt: timestamp("claimed_at", { withTimezone: true }),
+  // Unclaimed quick docs expire (rolling ~30 days after last write); enforced
+  // on read+write, extended on each successful write, cleared on claim.
+  expiresAt: timestamp("expires_at", { withTimezone: true }),
   createdAt: createdAt(),
 });
 
@@ -211,6 +219,18 @@ export const oauthRefreshTokens = pgTable("oauth_refresh_tokens", {
   revoked: boolean("revoked").notNull().default(false),
   createdAt: createdAt(),
 });
+
+// Quick-doc creation rate limiting: one counter row per (hashed IP, UTC day).
+// Stores only a salted sha256 of the IP, never the address itself.
+export const quickCreations = pgTable(
+  "quick_creations",
+  {
+    ipHash: text("ip_hash").notNull(),
+    day: text("day").notNull(), // UTC date "YYYY-MM-DD"
+    count: integer("count").notNull().default(0),
+  },
+  (t) => [primaryKey({ columns: [t.ipHash, t.day] })],
+);
 
 // Per-doc outbound network allowlist (P7; modeled early).
 export const networkGrants = pgTable(
