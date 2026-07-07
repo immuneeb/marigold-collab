@@ -3,6 +3,7 @@ import {
   authorize,
   deleteDoc,
   IngestError,
+  quickDocExpiry,
   renameDoc,
   roleCan,
   updateDoc,
@@ -10,6 +11,7 @@ import {
 import { db, docs } from "@marigold/db";
 import { currentActor } from "@/lib/actor";
 import { json } from "@/lib/http";
+import { quickKeyGrants, requestQuickKey } from "@/lib/quick";
 
 export const runtime = "nodejs";
 
@@ -50,7 +52,18 @@ export async function PATCH(req: Request, { params }: Params) {
   const { id } = await params;
   const actor = await currentActor();
   const { ok } = await authorize(id, actor, "update");
-  if (!ok) return json(actor.userId ? 403 : 401, { error: "forbidden" });
+  // Additive quick-doc branch: a valid key on a live unclaimed doc may rename
+  // and update (the viewer sends it as X-Marigold-Key). Owned docs never
+  // reach this — their key hash is burned.
+  let quick = false;
+  if (!ok) {
+    const doc = (
+      await db.select().from(docs).where(eq(docs.id, id)).limit(1)
+    )[0];
+    quick =
+      !!doc && !doc.quarantined && quickKeyGrants(doc, requestQuickKey(req));
+    if (!quick) return json(actor.userId ? 403 : 401, { error: "forbidden" });
+  }
 
   let body: { title?: string; html?: string; files?: unknown };
   try {
@@ -59,11 +72,22 @@ export async function PATCH(req: Request, { params }: Params) {
     return json(400, { error: "invalid_json" });
   }
 
+  const extendQuickExpiry = async () => {
+    // Rolling expiry: a successful unclaimed write buys another 30 days.
+    if (quick) {
+      await db
+        .update(docs)
+        .set({ expiresAt: quickDocExpiry() })
+        .where(eq(docs.id, id));
+    }
+  };
+
   // Title-only rename: metadata change, no new version.
   if (body.html === undefined && body.files === undefined) {
     if (typeof body.title !== "string")
       return json(400, { error: "nothing_to_update" });
     const { title } = await renameDoc(id, body.title);
+    await extendQuickExpiry();
     return json(200, { docId: id, title });
   }
 
@@ -74,6 +98,7 @@ export async function PATCH(req: Request, { params }: Params) {
       html: body.html,
       files: body.files as never,
     });
+    await extendQuickExpiry();
     return json(200, result);
   } catch (e) {
     if (e instanceof IngestError)

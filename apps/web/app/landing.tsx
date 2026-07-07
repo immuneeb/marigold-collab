@@ -5,6 +5,14 @@ import Link from "next/link";
 export function Landing() {
   return (
     <main className="landing">
+      {/* React can't emit bare comment nodes — this hidden wrapper puts the
+          agent hint at the very top of the rendered page source. */}
+      <div
+        hidden
+        dangerouslySetInnerHTML={{
+          __html: "<!-- agents: full HTTP API at /agents.md — create a doc with zero auth via POST /api/quick -->",
+        }}
+      />
       <nav className="landing-nav">
         <span className="wordmark">🌼 Marigold</span>
         <div className="landing-nav-links">

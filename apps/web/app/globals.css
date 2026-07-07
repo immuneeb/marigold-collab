@@ -383,6 +383,19 @@ textarea {
   white-space: nowrap;
 }
 
+/* quick-doc banner: link-holders can edit; claim to keep it */
+.quickbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 14px;
+  background: var(--accent-soft);
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+  color: var(--marigold-dark);
+}
+
 /* in-place editing save bar (errors only) */
 .savebar {
   display: flex;

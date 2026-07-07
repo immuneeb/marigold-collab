@@ -61,11 +61,16 @@ export async function reanchorComments(
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
 export interface CreateDocInput {
-  ownerId: string;
+  // Null = unclaimed quick doc: the ?k= URL is the only capability until claim.
+  ownerId: string | null;
   title?: string;
   html?: string;
   files?: InputFile[];
   assistant?: string;
+  // Quick-doc fields (set together, only for ownerless creates): the sha256 of
+  // the edit key, and the initial rolling expiry.
+  quickKeyHash?: string;
+  expiresAt?: Date;
 }
 
 export interface UpdateDocInput {
@@ -132,6 +137,8 @@ export async function createDoc(input: CreateDocInput): Promise<VersionResult> {
       renderId,
       ownerId: input.ownerId,
       title: input.title ?? null,
+      quickKeyHash: input.quickKeyHash ?? null,
+      expiresAt: input.expiresAt ?? null,
     });
     await tx.insert(docVersions).values({
       id: versionId,

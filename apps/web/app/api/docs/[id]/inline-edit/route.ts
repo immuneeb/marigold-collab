@@ -5,11 +5,13 @@ import {
   getBlobStore,
   IngestError,
   type InlineEdit,
+  quickDocExpiry,
   updateDoc,
 } from "@marigold/core";
 import { db, docs } from "@marigold/db";
 import { currentActor } from "@/lib/actor";
 import { json } from "@/lib/http";
+import { quickKeyGrants, requestQuickKey } from "@/lib/quick";
 
 export const runtime = "nodejs";
 
@@ -21,7 +23,18 @@ export async function POST(req: Request, { params }: Params) {
   const { id } = await params;
   const actor = await currentActor();
   const { ok } = await authorize(id, actor, "update");
-  if (!ok) return json(actor.userId ? 403 : 401, { error: "forbidden" });
+  // Additive quick-doc branch: a valid key on a live unclaimed doc is edit
+  // capability (the viewer sends it as X-Marigold-Key). Owned docs never
+  // reach this — their key hash is burned.
+  let quick = false;
+  if (!ok) {
+    const doc = (
+      await db.select().from(docs).where(eq(docs.id, id)).limit(1)
+    )[0];
+    quick =
+      !!doc && !doc.quarantined && quickKeyGrants(doc, requestQuickKey(req));
+    if (!quick) return json(actor.userId ? 403 : 401, { error: "forbidden" });
+  }
 
   let body: { versionId?: string; edits?: InlineEdit[] };
   try {
@@ -58,6 +71,13 @@ export async function POST(req: Request, { params }: Params) {
       html: newHtml,
       assistant: "inline-edit",
     });
+    // Rolling expiry: a successful unclaimed write buys another 30 days.
+    if (quick) {
+      await db
+        .update(docs)
+        .set({ expiresAt: quickDocExpiry() })
+        .where(eq(docs.id, id));
+    }
     return json(200, {
       versionId: result.versionId,
       ordinal: result.ordinal,
