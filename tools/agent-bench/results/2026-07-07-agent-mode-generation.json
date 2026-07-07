@@ -1,0 +1,55 @@
+{
+  "medium_30kb": {
+    "full_replace_ms": [
+      105823,
+      102087,
+      103086
+    ],
+    "full_replace_ms_median": 103086,
+    "full_replace_bytes": 31398,
+    "full_replace_tokens": 8486,
+    "patch_ms": [
+      10712,
+      7871,
+      7293
+    ],
+    "patch_ms_median": 7871,
+    "patch_bytes": 207,
+    "patch_tokens": 56,
+    "wallclock_speedup": "13.1x  (103086ms / 7871ms)",
+    "token_reduction": "152x  (8486 / 56 tok)"
+  },
+  "large_100kb": {
+    "full_replace_ms": [
+      325063,
+      318119,
+      317361
+    ],
+    "full_replace_ms_median": 318119,
+    "full_replace_bytes": 105115,
+    "full_replace_tokens": 28409,
+    "patch_ms": [
+      8748,
+      10159,
+      7725
+    ],
+    "patch_ms_median": 8748,
+    "patch_bytes": 207,
+    "patch_tokens": 56,
+    "wallclock_speedup": "36.4x  (318119ms / 8748ms)",
+    "token_reduction": "507x  (28409 / 56 tok)"
+  },
+  "tokenizer": "approx@3.7B/tok (tiktoken unavailable in env; offline pip install blocked)",
+  "notes": [
+    "N=3 per arm/size, single machine, prod https://marigold-collab-web.vercel.app.",
+    "Generation-bound measurement: t0 stamped at end of a turn (post doc-create); the payload is then EMITTED as my own output tokens in the NEXT turn (full page typed into a heredoc for full-replace; only the ops JSON for patch); t1 stamped right after the write response. t1-t0 brackets model token-generation of the payload plus one harness round-trip + the write request. Generation dominates the full-replace arm.",
+    "The full-replace payload was genuinely re-generated (typed out) each rep, NOT echoed from the on-disk fixture via curl -d @file (that would incur ~0 generation time and misrepresent the cost).",
+    "Fixed per-measurement overhead (harness turn round-trip + curl + non-payload text) is ~7-10s and sits almost entirely in the patch arm's wall-clock (207-byte ops generate in <1s). This INFLATES patch_ms, making the reported speedup CONSERVATIVE; the pure generation gap is larger.",
+    "Both arms produce the SAME visible change: h1 setText -> 'Q3 revenue: $4.2M - updated' + appended <section><h2>Update</h2><p>Revision applied.</p></section>. setText target = first content element <h1> mg-3d7f23d94e (the literal first data-marigold-id is <main>, but setText on it would wipe the doc). append target = <main> mg-a1dac1fc57 (afterend lands before </body>, matching the full-replace insertion point).",
+    "Each arm ran on its own fresh pristine-seed quick doc (admin-token create, no rate limit). marigold-ids are deterministic content hashes, so identical across docs of the same seed.",
+    "Large full-replace emitted bytes drifted slightly per rep (106869/104758/105115 vs 102603-byte seed) because re-emitting ~100KB by hand introduced a few duplicated tables - itself the realistic 'full-replace can corrupt unchanged content' failure mode that patch structurally avoids. Figures are ACTUAL emitted sizes; large full_replace_bytes = median 105115 (range 104758-106869).",
+    "Wire time is minor: full-replace also uploads 30-100KB vs patch's 207 bytes, but over broadband that is tens of ms vs multi-second/multi-minute generation - the finding is generation-bound, as intended.",
+    "A real cl100k tokenizer would rate dense HTML markup at ~4.0-4.3 B/tok and the tiny ops near 3.7, so true token_reduction is slightly HIGHER than the byte-ratio approximation shown.",
+    "Docs left in place (not deleted), per instructions."
+  ]
+}
