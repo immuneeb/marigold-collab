@@ -245,3 +245,35 @@ export const networkGrants = pgTable(
   },
   (t) => [primaryKey({ columns: [t.docId, t.origin] })],
 );
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Feedback-loop events feed
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Append-only, per-doc activity log that watching agents long-poll so a human
+// comment (or any change) reaches them in ≤1s instead of only on the next
+// prompt. `seq` is a per-doc monotonic cursor (max(seq)+1 under the doc row
+// lock, mirroring versioning.ts). Additive and never backfilled — a doc with no
+// events simply has none. Core (events.ts) is the only writer.
+export const docEvents = pgTable(
+  "doc_events",
+  {
+    id: text("id").primaryKey(), // "evt_..."
+    docId: text("doc_id")
+      .notNull()
+      .references(() => docs.id, { onDelete: "cascade" }),
+    seq: integer("seq").notNull(), // per-doc monotonic, gap-free cursor
+    // 'comment.created' | 'comment.resolved' | 'content.replaced' | 'version.saved'
+    type: text("type").notNull(),
+    // Who caused it: user id, or null for anonymous quick-key writes.
+    actor: text("actor"),
+    // Event-specific detail: { commentId, assignedToAi } | { versionId, ordinal }.
+    payload: jsonb("payload"),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    // Enforces gap-free per-doc ordering AND serves the
+    // `docId = ? and seq > ?  order by seq` range scan the long-poll runs.
+    uniqueIndex("doc_events_doc_seq_uq").on(t.docId, t.seq),
+  ],
+);

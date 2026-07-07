@@ -43,6 +43,13 @@
       "when": 1783390012795,
       "tag": "0005_watery_shadow_king",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1783425804726,
+      "tag": "0006_overrated_thaddeus_ross",
+      "breakpoints": true
     }
   ]
 }
