@@ -1,0 +1,66 @@
+import { and, eq, isNull } from "drizzle-orm";
+import { config, verifyQuickKey } from "@marigold/core";
+import { db, docs } from "@marigold/db";
+import { currentActor } from "@/lib/actor";
+import { json } from "@/lib/http";
+import { requestQuickKey } from "@/lib/quick";
+
+export const runtime = "nodejs";
+
+type Params = { params: Promise<{ id: string }> };
+
+// Graduation: valid quick key + signed-in session → the doc becomes a standard
+// private owned doc. The key hash is nulled (burned) in the same statement, so
+// the old ?k= URL stops granting anything — that's the point of claiming.
+// Expiry is cleared too: claiming rescues an expired-but-not-yet-purged doc.
+export async function POST(req: Request, { params }: Params) {
+  const { id } = await params;
+  const actor = await currentActor();
+  if (!actor.userId)
+    return json(401, {
+      error: "unauthenticated",
+      hint: "Claiming needs a signed-in session (the doc joins an account). Sign in at /login, then retry with the key — or open the claimUrl in a browser.",
+    });
+
+  const doc = (
+    await db.select().from(docs).where(eq(docs.id, id)).limit(1)
+  )[0];
+  if (!doc)
+    return json(404, { error: "not_found", hint: "No doc with this id." });
+  if (doc.ownerId)
+    return json(403, {
+      error: "already_claimed",
+      hint: "This doc already belongs to an account, so it can't be claimed again.",
+    });
+
+  const key = requestQuickKey(req);
+  if (!verifyQuickKey(key, doc.quickKeyHash))
+    return json(401, {
+      error: "invalid_key",
+      hint: "Claiming requires the doc's quick key (?k= or X-Marigold-Key) — only someone holding the link may claim it.",
+    });
+
+  // Guard the race: only claim while still ownerless (first valid claim wins).
+  const updated = await db
+    .update(docs)
+    .set({
+      ownerId: actor.userId,
+      claimedAt: new Date(),
+      expiresAt: null,
+      quickKeyHash: null, // burn the key
+    })
+    .where(and(eq(docs.id, id), isNull(docs.ownerId)))
+    .returning({ id: docs.id });
+  if (updated.length === 0)
+    return json(409, {
+      error: "claim_conflict",
+      hint: "Someone else claimed this doc first.",
+    });
+
+  return json(200, {
+    ok: true,
+    docId: id,
+    url: `${config.appOrigin}/d/${doc.slug}`,
+    dashboardUrl: `${config.appOrigin}/`,
+  });
+}

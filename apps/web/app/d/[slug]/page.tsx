@@ -8,13 +8,25 @@ import {
   signRenderToken,
 } from "@marigold/core";
 import { currentActor } from "@/lib/actor";
+import { quickAccess } from "@/lib/quick";
 import { ViewerClient } from "./viewer-client";
 
 export const runtime = "nodejs";
 
-type Params = { params: Promise<{ slug: string }> };
+type Params = {
+  params: Promise<{ slug: string }>;
+  searchParams: Promise<{ k?: string }>;
+};
 
-function Notice({ title, body }: { title: string; body: string }) {
+function Notice({
+  title,
+  body,
+  action,
+}: {
+  title: string;
+  body: string;
+  action?: { href: string; label: string };
+}) {
   return (
     <main className="container">
       <header className="topbar">
@@ -27,13 +39,21 @@ function Notice({ title, body }: { title: string; body: string }) {
           <strong>{title}</strong>
         </p>
         <p className="muted small">{body}</p>
+        {action && (
+          <p>
+            <Link href={action.href} className="btn btn-inline">
+              {action.label}
+            </Link>
+          </p>
+        )}
       </div>
     </main>
   );
 }
 
-export default async function ViewerPage({ params }: Params) {
+export default async function ViewerPage({ params, searchParams }: Params) {
   const { slug } = await params;
+  const { k } = await searchParams;
   const resolved = await getDocBySlug(slug);
   if (!resolved) notFound();
 
@@ -41,7 +61,23 @@ export default async function ViewerPage({ params }: Params) {
   const actor = await currentActor();
   const { ok, role } = await authorize(doc.id, actor, "view");
 
-  if (!ok) {
+  // Quick docs: the ?k= URL is the capability — a valid key on a live
+  // unclaimed doc grants view + edit, no account. Additive: owned/claimed docs
+  // never take this branch (their key hash is null).
+  const key = k?.trim() || null;
+  const access = quickAccess(doc, key);
+  const quick = access === "granted";
+
+  if (!ok && !quick) {
+    if (key && access === "expired") {
+      return (
+        <Notice
+          title="Quick doc expired"
+          body="This unclaimed doc passed its 30-day expiry. Claim it into an account to restore and keep it."
+          action={{ href: `/claim/${doc.id}?k=${key}`, label: "Claim this doc" }}
+        />
+      );
+    }
     if (!actor.userId)
       redirect(`/login?callbackUrl=${encodeURIComponent(`/d/${slug}`)}`);
     return (
@@ -61,11 +97,11 @@ export default async function ViewerPage({ params }: Params) {
   }
 
   // Anyone who can edit works against `latest` (their edits apply to what they
-  // see); read-only roles see `published`.
-  const versionId =
-    role && roleCan(role, "update")
-      ? (doc.latestVersionId ?? doc.publishedVersionId)
-      : doc.publishedVersionId;
+  // see); read-only roles see `published`. A quick key IS edit capability.
+  const canEdit = (!!role && roleCan(role, "update")) || quick;
+  const versionId = canEdit
+    ? (doc.latestVersionId ?? doc.publishedVersionId)
+    : doc.publishedVersionId;
   if (!versionId) {
     return (
       <Notice title="Not published yet" body="This doc has no published version." />
@@ -88,9 +124,14 @@ export default async function ViewerPage({ params }: Params) {
       versionId={versionId}
       iframeSrc={iframeSrc}
       canComment={!!role && roleCan(role, "comment")}
-      canEdit={!!role && roleCan(role, "update")}
+      canEdit={canEdit}
       isOwner={role === "owner"}
       signedIn={!!actor.userId}
+      quick={
+        quick
+          ? { editKey: key as string, claimUrl: `/claim/${doc.id}?k=${key}` }
+          : undefined
+      }
     />
   );
 }

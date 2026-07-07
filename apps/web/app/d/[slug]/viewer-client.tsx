@@ -32,6 +32,9 @@ export function ViewerClient(props: {
   canEdit: boolean;
   isOwner: boolean;
   signedIn: boolean;
+  // Unclaimed quick doc opened via its ?k= URL: the key authorizes saves
+  // (sent as X-Marigold-Key) and the banner offers graduation into an account.
+  quick?: { editKey: string; claimUrl: string };
 }) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [comments, setComments] = useState<Comment[]>([]);
@@ -42,6 +45,7 @@ export function ViewerClient(props: {
   const [selected, setSelected] = useState<string | null>(null);
   const [open, setOpen] = useState(true);
   const [showResolved, setShowResolved] = useState(false);
+  const [quickBanner, setQuickBanner] = useState(!!props.quick);
   // Auto-save machinery: edits stream in from the agent, get queued, and flush
   // serially; each save rolls a new version, so we chain versionId forward.
   const versionIdRef = useRef(props.versionId);
@@ -120,7 +124,10 @@ export function ViewerClient(props: {
     try {
       const res = await fetch(`/api/docs/${props.docId}/inline-edit`, {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: {
+          "content-type": "application/json",
+          ...(props.quick ? { "x-marigold-key": props.quick.editKey } : {}),
+        },
         body: JSON.stringify({ versionId: versionIdRef.current, edits: batch }),
       });
       const data = await res.json().catch(() => ({}));
@@ -140,7 +147,7 @@ export function ViewerClient(props: {
       flushingRef.current = false;
       if (!failed && queueRef.current.size > 0) void flushEdits();
     }
-  }, [props.docId]);
+  }, [props.docId, props.quick]);
 
   // Idempotent: no-op when the title already matches what's saved, so the
   // error bar's Retry can call it blindly alongside flushEdits.
@@ -155,7 +162,10 @@ export function ViewerClient(props: {
     try {
       const res = await fetch(`/api/docs/${props.docId}`, {
         method: "PATCH",
-        headers: { "content-type": "application/json" },
+        headers: {
+          "content-type": "application/json",
+          ...(props.quick ? { "x-marigold-key": props.quick.editKey } : {}),
+        },
         body: JSON.stringify({ title: next }),
       });
       const data = await res.json().catch(() => ({}));
@@ -168,7 +178,7 @@ export function ViewerClient(props: {
       setSaveState("error");
       setSaveError((e as Error).message);
     }
-  }, [props.docId, title]);
+  }, [props.docId, props.quick, title]);
 
   // postMessage from the agent — validate it's THIS iframe's window.
   useEffect(() => {
@@ -337,7 +347,7 @@ export function ViewerClient(props: {
           <button className="btn-ghost" onClick={() => setOpen((o) => !o)}>
             Comments {openCount > 0 ? `(${openCount})` : ""}
           </button>
-          {props.canEdit && (
+          {props.canEdit && !props.quick && (
             <Link
               href={`/d/${props.slug}/edit`}
               className="btn-ghost"
@@ -357,7 +367,13 @@ export function ViewerClient(props: {
             </Link>
           ) : (
             <Link
-              href={`/login?callbackUrl=${encodeURIComponent(`/d/${props.slug}`)}`}
+              // Quick visitors come back to the keyed URL — a bare /d/<slug>
+              // would land them on "No access" after signing in.
+              href={`/login?callbackUrl=${encodeURIComponent(
+                props.quick
+                  ? `/d/${props.slug}?k=${props.quick.editKey}`
+                  : `/d/${props.slug}`,
+              )}`}
               className="btn-secondary btn-inline"
               title="Sign in to comment or edit"
             >
@@ -366,6 +382,27 @@ export function ViewerClient(props: {
           )}
         </div>
       </header>
+
+      {props.quick && quickBanner && (
+        <div className="quickbar">
+          <span>
+            ⚡ Quick doc — anyone with this link can edit it, and it expires if
+            unclaimed. Claim it to keep it and control access.
+          </span>
+          <span className="savebar-actions">
+            <Link href={props.quick.claimUrl} className="btn btn-inline">
+              Claim
+            </Link>
+            <button
+              className="btn-ghost"
+              onClick={() => setQuickBanner(false)}
+              aria-label="Dismiss"
+            >
+              ✕
+            </button>
+          </span>
+        </div>
+      )}
 
       {saveState === "error" && (
         <div className="savebar">
