@@ -1,0 +1,65 @@
+{
+  "kind": "http",
+  "name": "smde",
+  "product": "simplemarkdowneditor",
+  "status": "live",
+  "baseUrl": "https://simplemarkdowneditor.com",
+  "contentFormat": "md",
+  "notes": [
+    "Real API verified 2026-07-05 (manual head-to-head) and against /agents.md.",
+    "Anonymous creation: no credentials needed; POST /new returns the edit key, which is the full capability (mint shares, delete).",
+    "Auth: pass the key as ?key= query param or X-Share-Key header; account tokens use Authorization: Bearer mgn_...",
+    "Every content read returns ETag + X-Doc-Version; PUT accepts If-Match (or baseVersion in body) for optimistic concurrency -> 409 on conflict.",
+    "Comment create accepts find/line/anchor targets and responds with anchored:true|false."
+  ],
+  "auth": {
+    "placement": "query",
+    "queryParam": "key",
+    "headerName": "X-Share-Key"
+  },
+  "discovery": [
+    { "method": "GET", "path": "/" },
+    { "method": "GET", "path": "/agents.md" }
+  ],
+  "create": {
+    "method": "POST",
+    "path": "/new",
+    "auth": false,
+    "body": { "type": "json", "template": { "title": "{title}", "content": "{content}" } },
+    "expectStatus": [201],
+    "response": { "id": "id", "key": "key", "url": "url" }
+  },
+  "read": {
+    "method": "GET",
+    "path": "/d/{id}.md",
+    "auth": true,
+    "expectStatus": [200]
+  },
+  "update": {
+    "method": "PUT",
+    "path": "/api/docs/{id}/content",
+    "auth": true,
+    "body": { "type": "json", "template": { "content": "{content}", "label": "{label}" } },
+    "conditional": { "type": "if-match" },
+    "expectStatus": [200]
+  },
+  "commentCreate": {
+    "method": "POST",
+    "path": "/api/docs/{id}/comments",
+    "auth": true,
+    "body": { "type": "json", "template": { "body": "{commentBody}", "find": "{commentFind}", "author": "agent-bench" } },
+    "expectStatus": [200, 201]
+  },
+  "commentList": {
+    "method": "GET",
+    "path": "/api/docs/{id}/comments",
+    "auth": true,
+    "expectStatus": [200]
+  },
+  "delete": {
+    "method": "DELETE",
+    "path": "/api/docs/{id}",
+    "auth": true,
+    "expectStatus": [200, 204]
+  }
+}

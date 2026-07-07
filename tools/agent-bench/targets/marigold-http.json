@@ -1,0 +1,56 @@
+{
+  "kind": "http",
+  "name": "marigold-http",
+  "product": "marigold",
+  "status": "PENDING — ships with the quick-start door. None of these endpoints exist yet; run-http.mjs against this target WILL FAIL until the quick-start API lands. Update this descriptor to the real shapes when it ships, then re-run.",
+  "baseUrl": "https://marigold-collab-web.vercel.app",
+  "contentFormat": "html",
+  "notes": [
+    "Placeholder for Marigold's planned anonymous HTTP quick-start API — the scripted counterpart to targets/marigold-mcp.json.",
+    "Planned: POST /api/quick -> {docId, url, editKey}; editKey is the full capability for the anonymous doc.",
+    "Planned: GET/PUT /api/docs/:id/content authenticated with the X-Marigold-Key header.",
+    "Planned: POST /api/docs/:id/claim to attach an anonymous doc to an account later.",
+    "Comment endpoints below are speculative (comments are web/MCP-only today); the runner skips FEEDBACK when they are null.",
+    "Conditional-update semantics (ETag/If-Match) TBD — 'conditional' is null until decided; add {\"type\": \"if-match\"} if the shipped API supports it.",
+    "When this ships, benchmark it against results/2026-07-05-smde-baseline.json — same phases, same fixtures — to validate the quick-start latency work."
+  ],
+  "auth": {
+    "placement": "header",
+    "headerName": "X-Marigold-Key"
+  },
+  "discovery": [
+    { "method": "GET", "path": "/" },
+    { "method": "GET", "path": "/agents.md" }
+  ],
+  "create": {
+    "method": "POST",
+    "path": "/api/quick",
+    "auth": false,
+    "body": { "type": "json", "template": { "title": "{title}", "html": "{content}" } },
+    "expectStatus": [200, 201],
+    "response": { "id": "docId", "key": "editKey", "url": "url" }
+  },
+  "read": {
+    "method": "GET",
+    "path": "/api/docs/{id}/content",
+    "auth": true,
+    "expectStatus": [200]
+  },
+  "update": {
+    "method": "PUT",
+    "path": "/api/docs/{id}/content",
+    "auth": true,
+    "body": { "type": "json", "template": { "html": "{content}" } },
+    "conditional": null,
+    "expectStatus": [200]
+  },
+  "commentCreate": null,
+  "commentList": null,
+  "delete": null,
+  "claim": {
+    "method": "POST",
+    "path": "/api/docs/{id}/claim",
+    "auth": true,
+    "notes": "Not part of the benchmark phases; recorded here so the descriptor documents the full planned surface."
+  }
+}

@@ -1,0 +1,127 @@
+{
+  "schema": "agent-bench/v1",
+  "product": "simplemarkdowneditor",
+  "target": "smde",
+  "kind": "http",
+  "mode": "scripted",
+  "base_url": "https://simplemarkdowneditor.com",
+  "size": "medium",
+  "content_format": "md",
+  "content_bytes": {
+    "v1": 31153,
+    "v2": 31286
+  },
+  "repeats": 1,
+  "ran_at": "2026-07-07T02:05:38.322Z",
+  "node": "v25.9.0",
+  "runs": [
+    {
+      "run": 1,
+      "phases": {
+        "create_ms": 241.2,
+        "verify1_ms": 149.3,
+        "update_ms": 121,
+        "verify2_ms": 27.8,
+        "feedback_ms": 79.2,
+        "total_ms": 618.7
+      },
+      "http_requests": [
+        {
+          "phase": "create",
+          "method": "POST",
+          "path": "/new",
+          "status": 201,
+          "network_time_s": 0.240559,
+          "response_bytes": 143
+        },
+        {
+          "phase": "verify1",
+          "method": "GET",
+          "path": "/d/cUIA5roAuU.md?key=…",
+          "status": 200,
+          "network_time_s": 0.148782,
+          "response_bytes": 31153
+        },
+        {
+          "phase": "update",
+          "method": "PUT",
+          "path": "/api/docs/cUIA5roAuU/content?key=…",
+          "status": 200,
+          "network_time_s": 0.120467,
+          "response_bytes": 40
+        },
+        {
+          "phase": "verify2",
+          "method": "GET",
+          "path": "/d/cUIA5roAuU.md?key=…",
+          "status": 200,
+          "network_time_s": 0.027465,
+          "response_bytes": 31286
+        },
+        {
+          "phase": "feedback",
+          "method": "POST",
+          "path": "/api/docs/cUIA5roAuU/comments?key=…",
+          "status": 200,
+          "network_time_s": 0.044799,
+          "response_bytes": 35
+        },
+        {
+          "phase": "feedback",
+          "method": "GET",
+          "path": "/api/docs/cUIA5roAuU/comments?key=…",
+          "status": 200,
+          "network_time_s": 0.033718,
+          "response_bytes": 290
+        },
+        {
+          "phase": "cleanup",
+          "method": "DELETE",
+          "path": "/api/docs/cUIA5roAuU?key=…",
+          "status": 200,
+          "network_time_s": 0.064749,
+          "response_bytes": 11
+        }
+      ],
+      "ok": true,
+      "update_response": "{\"ok\":true,\"version\":\"61cd473fb15b73bf\"}",
+      "comment_anchored": true,
+      "doc_id": "cUIA5roAuU",
+      "doc_url": "https://simplemarkdowneditor.com/d/cUIA5roAuU?key=6RPoK6lU4I6TY0sOlseMQ",
+      "cleanup_ms": 64.9,
+      "cleanup": "deleted"
+    }
+  ],
+  "medians": {
+    "create": {
+      "wall_ms": 241.2,
+      "wire_ms": 240.6,
+      "requests": 1
+    },
+    "verify1": {
+      "wall_ms": 149.3,
+      "wire_ms": 148.8,
+      "requests": 1
+    },
+    "update": {
+      "wall_ms": 121,
+      "wire_ms": 120.5,
+      "requests": 1
+    },
+    "verify2": {
+      "wall_ms": 27.8,
+      "wire_ms": 27.5,
+      "requests": 1
+    },
+    "feedback": {
+      "wall_ms": 79.2,
+      "wire_ms": 78.5,
+      "requests": 2
+    },
+    "TOTAL": {
+      "wall_ms": 618.7,
+      "wire_ms": 615.8,
+      "requests": 6
+    }
+  }
+}

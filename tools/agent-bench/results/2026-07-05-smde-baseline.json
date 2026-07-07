@@ -1,0 +1,94 @@
+{
+  "product": "simplemarkdowneditor",
+  "phases": {
+    "discovery_ms": 76727,
+    "create_ms": 234,
+    "verify1_ms": 109,
+    "update_ms": 130,
+    "verify2_ms": 100,
+    "feedback_ms": 200,
+    "total_ms": 125748
+  },
+  "http_requests": [
+    {
+      "phase": "discovery",
+      "method": "GET",
+      "path": "/",
+      "status": 200,
+      "network_time_s": 0.066732
+    },
+    {
+      "phase": "discovery",
+      "method": "GET",
+      "path": "/agents.md",
+      "status": 200,
+      "network_time_s": 0.068659
+    },
+    {
+      "phase": "create",
+      "method": "POST",
+      "path": "/new",
+      "status": 201,
+      "network_time_s": 0.136489
+    },
+    {
+      "phase": "verify1",
+      "method": "GET",
+      "path": "/d/MH3iPoPWlN.md?key=\u2026",
+      "status": 200,
+      "network_time_s": 0.07025
+    },
+    {
+      "phase": "update",
+      "method": "PUT",
+      "path": "/api/docs/MH3iPoPWlN/content",
+      "status": 200,
+      "network_time_s": 0.091343
+    },
+    {
+      "phase": "verify2",
+      "method": "GET",
+      "path": "/d/MH3iPoPWlN.md?key=\u2026",
+      "status": 200,
+      "network_time_s": 0.060502
+    },
+    {
+      "phase": "feedback",
+      "method": "POST",
+      "path": "/api/docs/MH3iPoPWlN/comments",
+      "status": 200,
+      "network_time_s": 0.07692
+    },
+    {
+      "phase": "feedback",
+      "method": "GET",
+      "path": "/api/docs/MH3iPoPWlN/comments",
+      "status": 200,
+      "network_time_s": 0.06881
+    }
+  ],
+  "round_trips_total": 8,
+  "doc_url": "https://simplemarkdowneditor.com/d/MH3iPoPWlN?key=82STI5rDm52g4VL0r2IAD",
+  "edit_key": "82STI5rDm52g4VL0r2IAD",
+  "capabilities_observed": [
+    "auth: three tiers \u2014 (a) NO credentials: GET/POST /new returns a fresh anonymous doc + edit key that is the full capability; (b) share link ?key=/X-Share-Key scoped to a role; (c) account Bearer token mgn_\u2026 . When both token+key are sent, the key's narrower role wins.",
+    "sharing roles: view / comment / suggest / edit; mint via POST /api/docs/ID/shares, list+revoke owner-only; revoke drops live editing sessions instantly; links can never exceed edit (no escalation)",
+    "versioning: every content read returns ETag + X-Doc-Version (hash over canonical markdown AND pending suggestions); optimistic-concurrency writes via If-Match header or baseVersion body \u2192 409 {currentVersion,hint} on conflict; unconditional PUT if omitted. Successful PUT returns new version. Verified: If-Match matched (200), version advanced da2dde72\u2192ba90591f",
+    "history: GET /revisions (authors + label, paginated newest-first), GET /revisions/RID, POST /restore \u2014 full version history with one-click restore",
+    "comments: POST with find/line/anchor target; response returns anchored:true|false so an unresolvable anchor is never silently dropped (created doc-level instead); threads via /replies, /resolve; on content replace open comments re-pin by quoted text (whitespace-insensitive), survive unanchored if quote gone. Verified anchored:true on 'Fact-check pricing'",
+    "suggestions: track-changes replace/delete/insert (suggest role); GET /suggestions, accept/reject; proposer-reviewer pattern (workers get suggest keys, reviewer accepts). Reads exclude pending suggestions",
+    "events/notifications: append-only activity feed GET /events?since=SEQ with long-poll wait=N (\u226455s) + since=latest; monotonic per-doc seq, typed events (comment.created, suggestion.*, content.replaced, version.saved, doc.edited\u2026), actor+payload \u2014 enables wake-on-change / zero busy-poll coordination",
+    "attribution: token \u2192 account username (author field ignored); share-key \u2192 guest:true with optional author name; impersonation blocked (409 if author matches an existing account username). Verified: comment recorded author=bench-human, guest=true",
+    "live components (kind:live docs): board/chat/sheet/chart/widget fenced blocks \u2014 authored/read as plain markdown/JSON text (no browser needed)",
+    "media: POST /api/docs/ID/assets uploads raster image bytes \u2192 content-addressed immutable /f/<hash> url + ready markdown (SVG refused, 10MB max)",
+    "ergonomics: content served directly as text/markdown (plain curl reads); /d/ID.md or Accept: text/markdown or ?format=md; Link rel=service-doc header on every doc points to /agents.md; anonymous doc claimable into an account; official `mde` CLI",
+    "content-required guard: PUT without content \u2192 400 (never silent wipe); explicit ''=deliberate clear"
+  ],
+  "friction_notes": [
+    "Near-zero discovery friction: the root HTML's very first line is an agent hint ('GET with Accept: text/markdown \u2026 full agent API: /agents.md'); /agents.md is a complete, accurate REST reference. No auth needed to create. Every response shape matched the docs exactly \u2014 no ambiguity about which endpoint creates a doc.",
+    "Tooling (my side, not the product): macOS `date` lacks %N, so `date +%s%3N` emitted a literal 'N' and broke the initial ms timestamps; I switched to a python3 millisecond clock for all phase timings. Consequence: total_start is second-granular (reconstructed from `date +%s`=1783301420), so total_ms carries up to ~1s of imprecision; all per-request network times (curl time_total) and per-phase deltas are precise ms.",
+    "discovery_ms (~77s) is wall-clock dominated by reading two docs + reasoning, NOT network \u2014 the two discovery requests totalled ~0.135s on the wire.",
+    "Minor: If-Match wants the quoted ETag value; passing If-Match: \"da2dde721ff0c705\" matched cleanly (200). Docs offer both If-Match header and baseVersion body \u2014 either works.",
+    "No conditional-write conflict occurred (single writer), so the 409 re-read path was documented but not exercised."
+  ]
+}

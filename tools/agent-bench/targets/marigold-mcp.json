@@ -1,0 +1,34 @@
+{
+  "kind": "mcp",
+  "name": "marigold-mcp",
+  "product": "marigold",
+  "status": "live",
+  "server": {
+    "endpoint": "https://marigold-collab-web.vercel.app/api/mcp",
+    "transport": "streamable-http",
+    "auth": "OAuth 2.1 (DCR + PKCE) — connect via a client that supports it (claude.ai connector, Claude Code `claude mcp add`)"
+  },
+  "contentFormat": "html",
+  "tools": {
+    "create": "create_doc",
+    "read": "get_doc",
+    "update": "update_doc",
+    "commentList": "get_comments",
+    "commentReply": "reply_to_comment",
+    "commentResolve": "resolve_comment",
+    "share": "share_doc",
+    "delete": "delete_doc",
+    "list": "list_docs",
+    "methodology": "start_analysis"
+  },
+  "runVia": "prompts/cold-start.md — kind:mcp targets cannot be pure-scripted; every tool call is wrapped in a model turn, so runs go through an agent following the prompt template.",
+  "notes": [
+    "create_doc returns docId, slug, absolute url, versionId, ordinal in ONE call — live shareable URL immediately, no follow-up round trip.",
+    "update_doc mints a new immutable content-addressed versionId; identical HTML is a dedup no-op (response carries an 'unchanged' flag).",
+    "get_doc returns full currentHtml plus latestVersionId/publishedVersionId; note it returns a RELATIVE url while create/update return absolute (known inconsistency, see baseline friction_notes).",
+    "FEEDBACK phase: posting a comment has no MCP tool (comments come from humans in the viewer); the agent-side FEEDBACK measurement is get_comments. For a full post+read loop a human/browser must place the comment.",
+    "Timing caveat: phase walls bracket the MCP call PLUS model turns on both ends — upper bounds on product latency. See README 'model-turn bracketing'.",
+    "tool_load_ms (connector/tool-schema fetch at session start) is this target's analogue of DISCOVERY; record it separately."
+  ],
+  "baseline": "results/2026-07-05-marigold-mcp-baseline.json"
+}

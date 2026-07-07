@@ -1,0 +1,45 @@
+{
+  "size": "medium",
+  "description": "Change one table cell (Fact-check pricing: pending -> done) and append one 'Update 1' section.",
+  "html": {
+    "replace": {
+      "find": "status-pending-rev0",
+      "with": "status-done-rev1"
+    },
+    "append": {
+      "beforeMarker": "</main>",
+      "content": "<section id=\"bench-update-1\"><h2>Update 1</h2><p>Revision applied by agent-bench: pricing fact-check complete; figures confirmed against the status table. bench-update-1.</p></section>\n"
+    },
+    "verify1MustContain": [
+      "status-pending-rev0",
+      "bench-fixture-end"
+    ],
+    "verify2MustContain": [
+      "status-done-rev1",
+      "bench-update-1",
+      "bench-fixture-end"
+    ]
+  },
+  "md": {
+    "replace": {
+      "find": "status-pending-rev0",
+      "with": "status-done-rev1"
+    },
+    "append": {
+      "content": "\n## Update 1\n\nRevision applied by agent-bench: pricing fact-check complete; figures confirmed against the status table. bench-update-1.\n"
+    },
+    "verify1MustContain": [
+      "status-pending-rev0",
+      "bench-fixture-end"
+    ],
+    "verify2MustContain": [
+      "status-done-rev1",
+      "bench-update-1",
+      "bench-fixture-end"
+    ]
+  },
+  "comment": {
+    "find": "Fact-check pricing",
+    "body": "agent-bench: please double-check the pricing figures behind this row before the next revision."
+  }
+}

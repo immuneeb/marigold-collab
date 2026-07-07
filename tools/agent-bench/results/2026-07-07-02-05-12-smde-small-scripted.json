@@ -1,0 +1,242 @@
+{
+  "schema": "agent-bench/v1",
+  "product": "simplemarkdowneditor",
+  "target": "smde",
+  "kind": "http",
+  "mode": "scripted",
+  "base_url": "https://simplemarkdowneditor.com",
+  "size": "small",
+  "content_format": "md",
+  "content_bytes": {
+    "v1": 1077,
+    "v2": 1210
+  },
+  "repeats": 2,
+  "ran_at": "2026-07-07T02:05:12.660Z",
+  "node": "v25.9.0",
+  "runs": [
+    {
+      "run": 1,
+      "phases": {
+        "discovery_ms": 248.6,
+        "create_ms": 44,
+        "verify1_ms": 65,
+        "update_ms": 53.9,
+        "verify2_ms": 26.5,
+        "feedback_ms": 60.3,
+        "total_ms": 498.5
+      },
+      "http_requests": [
+        {
+          "phase": "discovery",
+          "method": "GET",
+          "path": "/",
+          "status": 200,
+          "network_time_s": 0.214168,
+          "response_bytes": 16393
+        },
+        {
+          "phase": "discovery",
+          "method": "GET",
+          "path": "/agents.md",
+          "status": 200,
+          "network_time_s": 0.033767,
+          "response_bytes": 27054
+        },
+        {
+          "phase": "create",
+          "method": "POST",
+          "path": "/new",
+          "status": 201,
+          "network_time_s": 0.043571,
+          "response_bytes": 143
+        },
+        {
+          "phase": "verify1",
+          "method": "GET",
+          "path": "/d/1CVaXBz9k0.md?key=…",
+          "status": 200,
+          "network_time_s": 0.064604,
+          "response_bytes": 1077
+        },
+        {
+          "phase": "update",
+          "method": "PUT",
+          "path": "/api/docs/1CVaXBz9k0/content?key=…",
+          "status": 200,
+          "network_time_s": 0.053651,
+          "response_bytes": 40
+        },
+        {
+          "phase": "verify2",
+          "method": "GET",
+          "path": "/d/1CVaXBz9k0.md?key=…",
+          "status": 200,
+          "network_time_s": 0.026296,
+          "response_bytes": 1210
+        },
+        {
+          "phase": "feedback",
+          "method": "POST",
+          "path": "/api/docs/1CVaXBz9k0/comments?key=…",
+          "status": 200,
+          "network_time_s": 0.03396,
+          "response_bytes": 35
+        },
+        {
+          "phase": "feedback",
+          "method": "GET",
+          "path": "/api/docs/1CVaXBz9k0/comments?key=…",
+          "status": 200,
+          "network_time_s": 0.02577,
+          "response_bytes": 290
+        },
+        {
+          "phase": "cleanup",
+          "method": "DELETE",
+          "path": "/api/docs/1CVaXBz9k0?key=…",
+          "status": 200,
+          "network_time_s": 0.04942,
+          "response_bytes": 11
+        }
+      ],
+      "ok": true,
+      "update_response": "{\"ok\":true,\"version\":\"e5764719c20c5967\"}",
+      "comment_anchored": true,
+      "doc_id": "1CVaXBz9k0",
+      "doc_url": "https://simplemarkdowneditor.com/d/1CVaXBz9k0?key=uniQ-jMgfszWcacnI0RHE",
+      "cleanup_ms": 49.7,
+      "cleanup": "deleted"
+    },
+    {
+      "run": 2,
+      "phases": {
+        "discovery_ms": 52.8,
+        "create_ms": 46.6,
+        "verify1_ms": 30,
+        "update_ms": 44,
+        "verify2_ms": 28.7,
+        "feedback_ms": 63.1,
+        "total_ms": 265.4
+      },
+      "http_requests": [
+        {
+          "phase": "discovery",
+          "method": "GET",
+          "path": "/",
+          "status": 200,
+          "network_time_s": 0.024269,
+          "response_bytes": 16393
+        },
+        {
+          "phase": "discovery",
+          "method": "GET",
+          "path": "/agents.md",
+          "status": 200,
+          "network_time_s": 0.02816,
+          "response_bytes": 27054
+        },
+        {
+          "phase": "create",
+          "method": "POST",
+          "path": "/new",
+          "status": 201,
+          "network_time_s": 0.046449,
+          "response_bytes": 143
+        },
+        {
+          "phase": "verify1",
+          "method": "GET",
+          "path": "/d/QAZYLvnlF7.md?key=…",
+          "status": 200,
+          "network_time_s": 0.029854,
+          "response_bytes": 1077
+        },
+        {
+          "phase": "update",
+          "method": "PUT",
+          "path": "/api/docs/QAZYLvnlF7/content?key=…",
+          "status": 200,
+          "network_time_s": 0.043802,
+          "response_bytes": 40
+        },
+        {
+          "phase": "verify2",
+          "method": "GET",
+          "path": "/d/QAZYLvnlF7.md?key=…",
+          "status": 200,
+          "network_time_s": 0.028532,
+          "response_bytes": 1210
+        },
+        {
+          "phase": "feedback",
+          "method": "POST",
+          "path": "/api/docs/QAZYLvnlF7/comments?key=…",
+          "status": 200,
+          "network_time_s": 0.035952,
+          "response_bytes": 35
+        },
+        {
+          "phase": "feedback",
+          "method": "GET",
+          "path": "/api/docs/QAZYLvnlF7/comments?key=…",
+          "status": 200,
+          "network_time_s": 0.026837,
+          "response_bytes": 290
+        },
+        {
+          "phase": "cleanup",
+          "method": "DELETE",
+          "path": "/api/docs/QAZYLvnlF7?key=…",
+          "status": 200,
+          "network_time_s": 0.025723,
+          "response_bytes": 11
+        }
+      ],
+      "ok": true,
+      "update_response": "{\"ok\":true,\"version\":\"e5764719c20c5967\"}",
+      "comment_anchored": true,
+      "doc_id": "QAZYLvnlF7",
+      "doc_url": "https://simplemarkdowneditor.com/d/QAZYLvnlF7?key=KrgKxh5OWVvME6J0l64tD",
+      "cleanup_ms": 25.9,
+      "cleanup": "deleted"
+    }
+  ],
+  "medians": {
+    "discovery": {
+      "wall_ms": 150.7,
+      "wire_ms": 150.2,
+      "requests": 2
+    },
+    "create": {
+      "wall_ms": 45.3,
+      "wire_ms": 45,
+      "requests": 1
+    },
+    "verify1": {
+      "wall_ms": 47.5,
+      "wire_ms": 47.2,
+      "requests": 1
+    },
+    "update": {
+      "wall_ms": 49,
+      "wire_ms": 48.7,
+      "requests": 1
+    },
+    "verify2": {
+      "wall_ms": 27.6,
+      "wire_ms": 27.4,
+      "requests": 1
+    },
+    "feedback": {
+      "wall_ms": 61.7,
+      "wire_ms": 61.3,
+      "requests": 2
+    },
+    "TOTAL": {
+      "wall_ms": 382,
+      "wire_ms": 379.8,
+      "requests": 8
+    }
+  }
+}

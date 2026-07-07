@@ -1,0 +1,39 @@
+{
+  "product": "marigold",
+  "phases": {
+    "tool_load_ms": 5000,
+    "create_ms": 11513,
+    "verify1_ms": 6909,
+    "update_ms": 9134,
+    "verify2_ms": 7821,
+    "feedback_ms": 7064,
+    "total_ms": 96003
+  },
+  "mcp_calls": [
+    {"phase": "CREATE", "tool": "create_doc", "wall_ms": 11513, "ok": true},
+    {"phase": "VERIFY1", "tool": "get_doc", "wall_ms": 6909, "ok": true},
+    {"phase": "UPDATE", "tool": "update_doc", "wall_ms": 9134, "ok": true},
+    {"phase": "VERIFY2", "tool": "get_doc", "wall_ms": 7821, "ok": true},
+    {"phase": "FEEDBACK", "tool": "get_comments", "wall_ms": 7064, "ok": true}
+  ],
+  "calls_total": 5,
+  "doc_id": "doc_01KWTGSXBZANK84QQEBJC8SRM5",
+  "view_url": "https://marigold-collab-web.vercel.app/d/launch-plan-latency-test-miazcu",
+  "capabilities_observed": [
+    "create_doc returns docId, slug, full absolute url, versionId, and ordinal in one call — a live shareable/viewable URL is available immediately on create with no follow-up call",
+    "Immutable content-addressed versioning: each update_doc mints a new versionId and increments ordinal (1 -> 2); response includes 'unchanged' flag; update is a no-op if HTML is identical (dedup)",
+    "get_doc exposes latestVersionId AND publishedVersionId separately (draft vs published distinction), renderOrigin on a separate cross-site origin (marigold-render.vercel.app), public flag, and full currentHtml",
+    "share_doc supports per-email grants with roles viewer/commenter/editor, plus a public link-visibility toggle; docs default to private (public:false)",
+    "get_comments supports status filter (open/resolved/orphaned) and assignedToAi filter; comments anchor to element text and re-anchor across versions (per tool descriptions)",
+    "Self-contained single-HTML-page doc model; CSP blocks external scripts/fonts/images (fail silently); inline CSS/JS/SVG and data: URIs required",
+    "Companion tools present beyond the tested set: start_analysis (authoring methodology), reply_to_comment, resolve_comment, list_docs (with openAiComments count), delete_doc"
+  ],
+  "friction_notes": [
+    "macOS BSD `date` does not support %3N (milliseconds) — the initial tool_load timing was captured only at second resolution, so tool_load_ms is ~5000ms (+/-1s). Switched to `python3 -c 'time.time()*1000'` for all subsequent phases for true ms precision.",
+    "Measurement method caveat: each phase_ms brackets the MCP call PLUS model inference on both ends and the trailing Bash timestamp round-trip, so phase numbers are an UPPER BOUND on pure product/network latency, not the raw MCP response time. Real per-call product latency is materially lower than the reported wall_ms.",
+    "total_ms is true wall clock start->end and is dominated by inter-phase agent/harness overhead (~48s of the ~96s total came from the timestamp-bracketing Bash calls and agent turns between phases), NOT product latency.",
+    "Minor URL inconsistency: create_doc and update_doc return an ABSOLUTE url (https://marigold-collab-web.vercel.app/d/...), but get_doc returns a RELATIVE url ('/d/...'); an agent must reconcile these to construct a shareable link.",
+    "No friction on schemas: create_doc requires only `html` (title optional); update_doc requires docId+html. No mode/posture/or other extra params were required — minimal defaults were sufficient. No retries were needed; all 5 MCP calls succeeded on first attempt.",
+    "Content verified byte-accurate at both checkpoints: v1 matched exactly; v2 correctly showed the 'Fact-check pricing' status changed to 'done' and the appended 'Update 1' section, with DOM otherwise stable."
+  ]
+}
