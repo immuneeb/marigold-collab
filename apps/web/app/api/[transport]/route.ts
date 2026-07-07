@@ -12,9 +12,11 @@ import {
   deleteDoc,
   getBlobStore,
   IngestError,
+  listThemes,
   MARIGOLD_DIGEST,
   renderOriginFor,
   roleCan,
+  ThemeError,
   updateDoc,
 } from "@marigold/core";
 import { comments, db, docs } from "@marigold/db";
@@ -59,6 +61,12 @@ async function currentHtmlOf(latestVersionId: string | null): Promise<string | n
   // Return clean HTML — strip Marigold's injected ids + agent.
   return bytes ? deinstrumentHtml(new TextDecoder().decode(bytes)) : null;
 }
+
+// Built-in theme ids, for the create_doc description (kept in sync with the
+// core registry so the tool always advertises what actually exists).
+const THEME_IDS = listThemes()
+  .map((t) => t.id)
+  .join(", ");
 
 const baseHandler = createMcpHandler(
   (server) => {
@@ -162,22 +170,41 @@ const baseHandler = createMcpHandler(
       {
         title: "Create doc",
         description:
-          "Create a new Marigold doc from a self-contained HTML page and return its URL. Inline all CSS/JS/SVG and use data: URIs for images — external scripts, fonts, and images are blocked by CSP and fail silently. Lead with the core insight and carry the structure in a diagram (call start_analysis for the full authoring guide).",
-        inputSchema: { title: z.string().optional(), html: z.string() },
+          "Create a new Marigold doc and return its URL. Two ways to author: (1) full-control — pass `html`, one self-contained page (inline all CSS/JS/SVG, data: URIs for images; external scripts, fonts, and images are blocked by CSP and fail silently). (2) themed — pass a `theme` id plus `content` (the body's inner HTML: your semantic <h1>/<p>/<table>/<svg>… with NO <style> or page scaffold), and the server wraps it in the theme's stylesheet into a self-contained page. Themed docs can be updated content-only (send `content`, not `html`) and raise the quality floor. Valid theme ids: " +
+          THEME_IDS +
+          ". Lead with the core insight and carry the structure in a diagram (call start_analysis for the full authoring guide).",
+        inputSchema: {
+          title: z.string().optional(),
+          html: z
+            .string()
+            .optional()
+            .describe("Full self-contained HTML page. Omit when using theme + content."),
+          theme: z
+            .string()
+            .optional()
+            .describe(`Built-in theme id to wrap content in. One of: ${THEME_IDS}.`),
+          content: z
+            .string()
+            .optional()
+            .describe("Body inner HTML (semantic content only) — wrapped by `theme`."),
+        },
       },
-      async ({ title, html }, extra: ToolExtra) => {
+      async ({ title, html, theme, content }, extra: ToolExtra) => {
         const userId = userIdOf(extra);
         if (!userId) return fail("unauthenticated");
         try {
-          const r = await createDoc({ ownerId: userId, title, html, assistant: "mcp" });
+          const r = await createDoc({ ownerId: userId, title, html, theme, content, assistant: "mcp" });
           return ok({
             docId: r.docId,
             slug: r.slug,
             url: r.url,
             versionId: r.versionId,
             ordinal: r.ordinal,
+            theme: r.theme ?? null,
+            themeVersion: r.themeVersion ?? null,
           });
         } catch (e) {
+          if (e instanceof ThemeError) return fail(e.message);
           if (e instanceof IngestError) return fail(e.message);
           throw e;
         }
@@ -189,21 +216,28 @@ const baseHandler = createMcpHandler(
       {
         title: "Update doc",
         description:
-          "Replace a doc's content in place (same URL). No-op if unchanged. Keep the DOM structure stable — comments anchor to elements, so edit content in place; reordering or re-nesting sections orphans readers' comments.",
+          "Replace a doc's content in place (same URL). No-op if unchanged. Keep the DOM structure stable — comments anchor to elements, so edit content in place; reordering or re-nesting sections orphans readers' comments. If the doc is themed (get_doc / list_docs report its `theme`), send `content` (body inner HTML only) and the server re-wraps it in the pinned theme; sending `html` full-replaces the whole page instead.",
         inputSchema: {
           docId: z.string(),
-          html: z.string(),
+          html: z
+            .string()
+            .optional()
+            .describe("Full self-contained HTML page (full replace). Omit to send themed content."),
+          content: z
+            .string()
+            .optional()
+            .describe("Body inner HTML — re-wrapped in the doc's pinned theme (themed docs only)."),
           title: z.string().optional(),
         },
       },
-      async ({ docId, html, title }, extra: ToolExtra) => {
+      async ({ docId, html, content, title }, extra: ToolExtra) => {
         const userId = userIdOf(extra);
         if (!userId) return fail("unauthenticated");
         const actor = await actorForUserId(userId);
         const { ok: allowed } = await authorize(docId, actor, "update");
         if (!allowed) return fail("not authorized to update this doc");
         try {
-          const r = await updateDoc({ docId, html, title, assistant: "mcp" });
+          const r = await updateDoc({ docId, html, content, title, assistant: "mcp" });
           return ok({
             docId: r.docId,
             slug: r.slug,
@@ -211,8 +245,11 @@ const baseHandler = createMcpHandler(
             versionId: r.versionId,
             ordinal: r.ordinal,
             unchanged: r.unchanged,
+            theme: r.theme ?? null,
+            themeVersion: r.themeVersion ?? null,
           });
         } catch (e) {
+          if (e instanceof ThemeError) return fail(e.message);
           if (e instanceof IngestError) return fail(e.message);
           throw e;
         }
@@ -237,6 +274,8 @@ const baseHandler = createMcpHandler(
             title: docs.title,
             url: docs.slug,
             public: docs.isPublic,
+            theme: docs.theme,
+            themeVersion: docs.themeVersion,
             createdAt: docs.createdAt,
           })
           .from(docs)
@@ -299,6 +338,10 @@ const baseHandler = createMcpHandler(
           ...(canUpdate ? { latestVersionId: doc.latestVersionId } : {}),
           publishedVersionId: doc.publishedVersionId,
           public: doc.isPublic,
+          // Themed docs report their pinned theme so an agent can update
+          // content-only (send `content` to update_doc, not full `html`).
+          theme: doc.theme,
+          themeVersion: doc.themeVersion,
           currentHtml,
         });
       },

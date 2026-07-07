@@ -13,6 +13,7 @@ import { config, renderOriginFor } from "./env";
 import { ingest, type IngestResult, type InputFile } from "./ingest";
 import { type CommentAnchor, resolveAnchor } from "./instrument";
 import { makeSlug } from "./slug";
+import { getTheme, wrapWithTheme } from "./themes";
 import type { BlobStore, Manifest } from "./types";
 
 function htmlOf(ing: IngestResult): string | null {
@@ -67,6 +68,12 @@ export interface CreateDocInput {
   html?: string;
   files?: InputFile[];
   assistant?: string;
+  // Theme-pack authoring (additive): pass a built-in theme id plus semantic body
+  // `content` and the server wraps it into a self-contained page at ingest, then
+  // pins theme+themeVersion on the doc so later updates can stay content-only.
+  // `html`/`files` authoring is unchanged and leaves the doc themeless.
+  theme?: string;
+  content?: string;
   // Quick-doc fields (set together, only for ownerless creates): the sha256 of
   // the edit key, and the initial rolling expiry.
   quickKeyHash?: string;
@@ -78,6 +85,10 @@ export interface UpdateDocInput {
   title?: string;
   html?: string;
   files?: InputFile[];
+  // Content-only update for a themed doc: if the doc has a pinned theme and no
+  // `html`/`files` are supplied, the server re-wraps `content` with the doc's
+  // theme. Sending `html` instead full-replaces the page, exactly as before.
+  content?: string;
   assistant?: string;
   autoPublish?: boolean; // P1 default true; P3 review flow sets false
   /** Quick-key writes only: fail with DocClaimedError if the doc has an owner
@@ -92,6 +103,10 @@ export interface VersionResult {
   ordinal: number;
   url: string;
   unchanged: boolean;
+  // The doc's pinned theme + CSS version, or null on raw-HTML docs. Lets callers
+  // tell an agent a doc is themed (so it can send content-only updates).
+  theme?: string | null;
+  themeVersion?: number | null;
 }
 
 function viewerUrl(slug: string): string {
@@ -123,7 +138,21 @@ async function recordBlobRows(tx: Tx, ing: IngestResult): Promise<void> {
 }
 
 export async function createDoc(input: CreateDocInput): Promise<VersionResult> {
-  const ing = ingest({ html: input.html, files: input.files });
+  // Themed authoring: wrap the agent's semantic body content in the theme's
+  // stylesheet, and pin the theme+version on the doc. `getTheme` throws a
+  // ThemeError (surfaced by callers) on an unknown id. Raw html/files authoring
+  // leaves the doc themeless — behaves exactly as before.
+  let html = input.html;
+  let theme: string | null = null;
+  let themeVersion: number | null = null;
+  if (input.theme != null) {
+    const t = getTheme(input.theme);
+    html = wrapWithTheme(input.content ?? "", t.id);
+    theme = t.id;
+    themeVersion = t.version;
+  }
+
+  const ing = ingest({ html, files: input.files });
 
   const docId = newId("doc");
   const slug = makeSlug(input.title);
@@ -142,6 +171,8 @@ export async function createDoc(input: CreateDocInput): Promise<VersionResult> {
       title: input.title ?? null,
       quickKeyHash: input.quickKeyHash ?? null,
       expiresAt: input.expiresAt ?? null,
+      theme,
+      themeVersion,
     });
     await tx.insert(docVersions).values({
       id: versionId,
@@ -169,6 +200,8 @@ export async function createDoc(input: CreateDocInput): Promise<VersionResult> {
     ordinal: 1,
     url: viewerUrl(slug),
     unchanged: false,
+    theme,
+    themeVersion,
   };
 }
 
@@ -189,7 +222,15 @@ export async function updateDoc(input: UpdateDocInput): Promise<VersionResult> {
   if (input.requireUnclaimed && doc.ownerId !== null)
     throw new DocClaimedError(doc.id);
 
-  const ing = ingest({ html: input.html, files: input.files });
+  // Content-only update of a themed doc: re-wrap `content` with the doc's pinned
+  // theme so the stored page stays self-contained without the agent resending
+  // the stylesheet. Sending `html`/`files` full-replaces the page as before.
+  let html = input.html;
+  if (input.html == null && input.files == null && input.content != null && doc.theme) {
+    html = wrapWithTheme(input.content, doc.theme);
+  }
+
+  const ing = ingest({ html, files: input.files });
 
   // No-op: identical to the current latest -> no new version, no blob writes.
   if (doc.latestVersionId) {
@@ -212,6 +253,8 @@ export async function updateDoc(input: UpdateDocInput): Promise<VersionResult> {
         ordinal: latest.ordinal,
         url: viewerUrl(doc.slug),
         unchanged: true,
+        theme: doc.theme,
+        themeVersion: doc.themeVersion,
       };
     }
   }
@@ -305,6 +348,8 @@ export async function updateDoc(input: UpdateDocInput): Promise<VersionResult> {
     ordinal: result.ordinal,
     url: viewerUrl(doc.slug),
     unchanged: false,
+    theme: doc.theme,
+    themeVersion: doc.themeVersion,
   };
 }
 

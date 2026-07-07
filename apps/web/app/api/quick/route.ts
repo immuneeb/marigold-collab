@@ -5,6 +5,7 @@ import {
   hashQuickKey,
   IngestError,
   quickDocExpiry,
+  ThemeError,
 } from "@marigold/core";
 import { json } from "@/lib/http";
 import { checkQuickCreateLimit, refundQuickCreate } from "@/lib/quick";
@@ -30,13 +31,22 @@ interface QuickDoc {
   expiresAt: Date;
 }
 
-async function createQuickDoc(title: string | undefined, html: string): Promise<QuickDoc> {
+interface QuickCreateInput {
+  title?: string;
+  html?: string;
+  theme?: string;
+  content?: string;
+}
+
+async function createQuickDoc(input: QuickCreateInput): Promise<QuickDoc> {
   const key = generateQuickKey();
   const expiresAt = quickDocExpiry();
   const r = await createDoc({
     ownerId: null,
-    title,
-    html,
+    title: input.title,
+    html: input.html,
+    theme: input.theme,
+    content: input.content,
     quickKeyHash: hashQuickKey(key),
     expiresAt,
     assistant: "quick-api",
@@ -61,19 +71,21 @@ function rateLimited(cap: number): Response {
 export async function POST(req: Request) {
   // Validate BEFORE consuming rate-limit budget: malformed or oversized
   // attempts must not eat the caller's daily cap.
-  let body: { title?: string; html?: string };
+  let body: { title?: string; html?: string; theme?: string; content?: string };
   try {
     body = await req.json();
   } catch {
     return json(400, {
       error: "invalid_json",
-      hint: 'Send JSON: {"title": "optional", "html": "<one self-contained HTML page>"}.',
+      hint: 'Send JSON: {"title": "optional", "html": "<one self-contained HTML page>"} — or {"theme": "marigold-clean", "content": "<h1>…</h1>"} to use a built-in theme.',
     });
   }
-  if (typeof body.html !== "string" || body.html.length === 0) {
+  // Two authoring modes: raw `html`, or a built-in `theme` + semantic `content`.
+  const themed = typeof body.theme === "string";
+  if (!themed && (typeof body.html !== "string" || body.html.length === 0)) {
     return json(400, {
       error: "html_required",
-      hint: "Provide `html`: one self-contained page ≤2MB. Inline all CSS/JS/SVG; external scripts, fonts, and images are blocked by CSP.",
+      hint: "Provide `html` (one self-contained page ≤2MB; inline all CSS/JS/SVG) — or `theme` + `content` (body inner HTML) to have the server style it. External scripts, fonts, and images are blocked by CSP.",
     });
   }
 
@@ -81,10 +93,12 @@ export async function POST(req: Request) {
   if (!limit.ok) return rateLimited(limit.cap);
 
   try {
-    const d = await createQuickDoc(
-      typeof body.title === "string" ? body.title : undefined,
-      body.html,
-    );
+    const d = await createQuickDoc({
+      title: typeof body.title === "string" ? body.title : undefined,
+      html: typeof body.html === "string" ? body.html : undefined,
+      theme: themed ? body.theme : undefined,
+      content: typeof body.content === "string" ? body.content : undefined,
+    });
     return json(201, {
       docId: d.docId,
       slug: d.slug,
@@ -94,6 +108,15 @@ export async function POST(req: Request) {
       expiresAt: d.expiresAt.toISOString(),
     });
   } catch (e) {
+    if (e instanceof ThemeError) {
+      // Named an unknown theme — refund the reserved budget and list valid ids.
+      await refundQuickCreate(req);
+      return json(400, {
+        error: e.code,
+        message: e.message,
+        hint: `Pick a valid theme id: ${e.validThemeIds.join(", ")}.`,
+      });
+    }
     if (e instanceof IngestError) {
       // The create failed ingest validation — refund the budget it reserved.
       await refundQuickCreate(req);

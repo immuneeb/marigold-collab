@@ -1,5 +1,5 @@
 import { desc, eq } from "drizzle-orm";
-import { createDoc, IngestError } from "@marigold/core";
+import { createDoc, IngestError, ThemeError } from "@marigold/core";
 import { db, docs } from "@marigold/db";
 import { currentActor } from "@/lib/actor";
 import { json } from "@/lib/http";
@@ -14,7 +14,13 @@ export async function POST(req: Request) {
   const actor = await currentActor();
   if (!actor.userId) return json(401, { error: "unauthenticated" });
 
-  let body: { title?: string; html?: string; files?: unknown };
+  let body: {
+    title?: string;
+    html?: string;
+    files?: unknown;
+    theme?: string;
+    content?: string;
+  };
   try {
     body = await req.json();
   } catch {
@@ -22,14 +28,24 @@ export async function POST(req: Request) {
   }
 
   try {
+    // Additive theme branch: `theme` + `content` styles semantic body content
+    // server-side; `html`/`files` authoring is unchanged.
     const result = await createDoc({
       ownerId: actor.userId,
       title: body.title,
       html: body.html,
       files: body.files as never,
+      theme: body.theme,
+      content: body.content,
     });
     return json(200, result);
   } catch (e) {
+    if (e instanceof ThemeError)
+      return json(400, {
+        error: e.code,
+        message: e.message,
+        validThemeIds: e.validThemeIds,
+      });
     if (e instanceof IngestError)
       return json(ingestStatus(e.code), { error: e.code, message: e.message });
     throw e;
