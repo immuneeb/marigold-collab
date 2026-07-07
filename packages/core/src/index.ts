@@ -5,6 +5,7 @@ export * from "./ingest";
 export * from "./instrument";
 export * from "./slug";
 export * from "./acl";
+export * from "./quick";
 export * from "./versioning";
 export * from "./tokens";
 export * from "./blobs";
