@@ -1,0 +1,196 @@
+{
+  "schema": "agent-bench/v1",
+  "product": "marigold",
+  "target": "marigold-http",
+  "kind": "http",
+  "mode": "scripted",
+  "base_url": "https://marigold-collab-web.vercel.app",
+  "size": "medium",
+  "content_format": "html",
+  "content_bytes": {
+    "v1": 31352,
+    "v2": 31534
+  },
+  "repeats": 3,
+  "ran_at": "2026-07-07T03:02:06.656Z",
+  "node": "v25.9.0",
+  "runs": [
+    {
+      "run": 1,
+      "phases": {
+        "create_ms": 568.3,
+        "verify1_ms": 201.5,
+        "update_ms": 177.8,
+        "verify2_ms": 91.1,
+        "total_ms": 1038.9
+      },
+      "http_requests": [
+        {
+          "phase": "create",
+          "method": "POST",
+          "path": "/api/quick",
+          "status": 201,
+          "network_time_s": 0.567352,
+          "response_bytes": 403
+        },
+        {
+          "phase": "verify1",
+          "method": "GET",
+          "path": "/api/docs/doc_01KWX8D44EN1MQN68FSMVEQ68N/content",
+          "status": 200,
+          "network_time_s": 0.201135,
+          "response_bytes": 31735
+        },
+        {
+          "phase": "update",
+          "method": "PUT",
+          "path": "/api/docs/doc_01KWX8D44EN1MQN68FSMVEQ68N/content",
+          "status": 200,
+          "network_time_s": 0.177322,
+          "response_bytes": 115
+        },
+        {
+          "phase": "verify2",
+          "method": "GET",
+          "path": "/api/docs/doc_01KWX8D44EN1MQN68FSMVEQ68N/content",
+          "status": 200,
+          "network_time_s": 0.090511,
+          "response_bytes": 31920
+        }
+      ],
+      "ok": true,
+      "update_response": "{\"versionId\":\"ver_01KWX8D4GRM604CXBXGQH8WYY8\",\"ordinal\":2,\"unchanged\":false,\"expiresAt\":\"2026-08-06T03:02:05.647Z\"}",
+      "feedback_skipped": "target has no comment endpoints",
+      "doc_id": "doc_01KWX8D44EN1MQN68FSMVEQ68N",
+      "doc_url": "https://marigold-collab-web.vercel.app/d/agent-bench-marigold-http-medium-run1-im79i0?k=…",
+      "cleanup": "target has no delete endpoint — doc left behind"
+    },
+    {
+      "run": 2,
+      "phases": {
+        "create_ms": 121.9,
+        "verify1_ms": 93.3,
+        "update_ms": 175.3,
+        "verify2_ms": 98.1,
+        "total_ms": 488.7
+      },
+      "http_requests": [
+        {
+          "phase": "create",
+          "method": "POST",
+          "path": "/api/quick",
+          "status": 201,
+          "network_time_s": 0.121442,
+          "response_bytes": 403
+        },
+        {
+          "phase": "verify1",
+          "method": "GET",
+          "path": "/api/docs/doc_01KWX8D4R38WTF4PBB86ZBFWHT/content",
+          "status": 200,
+          "network_time_s": 0.092958,
+          "response_bytes": 31735
+        },
+        {
+          "phase": "update",
+          "method": "PUT",
+          "path": "/api/docs/doc_01KWX8D4R38WTF4PBB86ZBFWHT/content",
+          "status": 200,
+          "network_time_s": 0.17473,
+          "response_bytes": 115
+        },
+        {
+          "phase": "verify2",
+          "method": "GET",
+          "path": "/api/docs/doc_01KWX8D4R38WTF4PBB86ZBFWHT/content",
+          "status": 200,
+          "network_time_s": 0.09774,
+          "response_bytes": 31920
+        }
+      ],
+      "ok": true,
+      "update_response": "{\"versionId\":\"ver_01KWX8D4ZXS1Q1BKRFS5092HJ9\",\"ordinal\":2,\"unchanged\":false,\"expiresAt\":\"2026-08-06T03:02:06.130Z\"}",
+      "feedback_skipped": "target has no comment endpoints",
+      "doc_id": "doc_01KWX8D4R38WTF4PBB86ZBFWHT",
+      "doc_url": "https://marigold-collab-web.vercel.app/d/agent-bench-marigold-http-medium-run2-v2smr6?k=…",
+      "cleanup": "target has no delete endpoint — doc left behind"
+    },
+    {
+      "run": 3,
+      "phases": {
+        "create_ms": 120.6,
+        "verify1_ms": 82.1,
+        "update_ms": 167.6,
+        "verify2_ms": 77.5,
+        "total_ms": 447.8
+      },
+      "http_requests": [
+        {
+          "phase": "create",
+          "method": "POST",
+          "path": "/api/quick",
+          "status": 201,
+          "network_time_s": 0.119853,
+          "response_bytes": 403
+        },
+        {
+          "phase": "verify1",
+          "method": "GET",
+          "path": "/api/docs/doc_01KWX8D57DA25GG39QZKR08T4V/content",
+          "status": 200,
+          "network_time_s": 0.081794,
+          "response_bytes": 31735
+        },
+        {
+          "phase": "update",
+          "method": "PUT",
+          "path": "/api/docs/doc_01KWX8D57DA25GG39QZKR08T4V/content",
+          "status": 200,
+          "network_time_s": 0.167119,
+          "response_bytes": 115
+        },
+        {
+          "phase": "verify2",
+          "method": "GET",
+          "path": "/api/docs/doc_01KWX8D57DA25GG39QZKR08T4V/content",
+          "status": 200,
+          "network_time_s": 0.077205,
+          "response_bytes": 31920
+        }
+      ],
+      "ok": true,
+      "update_response": "{\"versionId\":\"ver_01KWX8D5EM4QECERRPSXDP2FA7\",\"ordinal\":2,\"unchanged\":false,\"expiresAt\":\"2026-08-06T03:02:06.602Z\"}",
+      "feedback_skipped": "target has no comment endpoints",
+      "doc_id": "doc_01KWX8D57DA25GG39QZKR08T4V",
+      "doc_url": "https://marigold-collab-web.vercel.app/d/agent-bench-marigold-http-medium-run3-2o9w8q?k=…",
+      "cleanup": "target has no delete endpoint — doc left behind"
+    }
+  ],
+  "medians": {
+    "create": {
+      "wall_ms": 121.9,
+      "wire_ms": 121.4,
+      "requests": 1
+    },
+    "verify1": {
+      "wall_ms": 93.3,
+      "wire_ms": 93,
+      "requests": 1
+    },
+    "update": {
+      "wall_ms": 175.3,
+      "wire_ms": 174.7,
+      "requests": 1
+    },
+    "verify2": {
+      "wall_ms": 91.1,
+      "wire_ms": 90.5,
+      "requests": 1
+    },
+    "TOTAL": {
+      "wall_ms": 488.7,
+      "wire_ms": 486.9,
+      "requests": 4
+    }
+  }
+}
