@@ -80,6 +80,9 @@ export interface UpdateDocInput {
   files?: InputFile[];
   assistant?: string;
   autoPublish?: boolean; // P1 default true; P3 review flow sets false
+  /** Quick-key writes only: fail with DocClaimedError if the doc has an owner
+   * (checked again under the write lock, closing the check-then-claim race). */
+  requireUnclaimed?: boolean;
 }
 
 export interface VersionResult {
@@ -169,11 +172,22 @@ export async function createDoc(input: CreateDocInput): Promise<VersionResult> {
   };
 }
 
+/** Thrown when a write required an unclaimed doc but the doc was claimed
+ * (key burned) between the caller's auth check and the write transaction. */
+export class DocClaimedError extends Error {
+  constructor(docId: string) {
+    super(`doc ${docId} was claimed; quick-key writes no longer apply`);
+    this.name = "DocClaimedError";
+  }
+}
+
 export async function updateDoc(input: UpdateDocInput): Promise<VersionResult> {
   const doc = (
     await db.select().from(docs).where(eq(docs.id, input.docId)).limit(1)
   )[0];
   if (!doc) throw new Error(`doc not found: ${input.docId}`);
+  if (input.requireUnclaimed && doc.ownerId !== null)
+    throw new DocClaimedError(doc.id);
 
   const ing = ingest({ html: input.html, files: input.files });
 
@@ -227,11 +241,17 @@ export async function updateDoc(input: UpdateDocInput): Promise<VersionResult> {
     // concurrent update_doc calls (no duplicate ordinal).
     const locked = (
       await tx
-        .select({ latestVersionId: docs.latestVersionId })
+        .select({ latestVersionId: docs.latestVersionId, ownerId: docs.ownerId })
         .from(docs)
         .where(eq(docs.id, doc.id))
         .for("update")
     )[0];
+
+    // Quick-key writes must not land on a doc claimed after the caller's auth
+    // check (the burned key "stops granting anything") — re-verify under the
+    // row lock, where a concurrent claim can no longer interleave.
+    if (input.requireUnclaimed && locked?.ownerId != null)
+      throw new DocClaimedError(doc.id);
 
     let versionId: string;
     let ordinal: number;

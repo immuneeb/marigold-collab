@@ -7,7 +7,7 @@ import {
   quickDocExpiry,
 } from "@marigold/core";
 import { json } from "@/lib/http";
-import { checkQuickCreateLimit } from "@/lib/quick";
+import { checkQuickCreateLimit, refundQuickCreate } from "@/lib/quick";
 
 export const runtime = "nodejs";
 
@@ -59,9 +59,8 @@ function rateLimited(cap: number): Response {
 }
 
 export async function POST(req: Request) {
-  const limit = await checkQuickCreateLimit(req);
-  if (!limit.ok) return rateLimited(limit.cap);
-
+  // Validate BEFORE consuming rate-limit budget: malformed or oversized
+  // attempts must not eat the caller's daily cap.
   let body: { title?: string; html?: string };
   try {
     body = await req.json();
@@ -78,6 +77,9 @@ export async function POST(req: Request) {
     });
   }
 
+  const limit = await checkQuickCreateLimit(req);
+  if (!limit.ok) return rateLimited(limit.cap);
+
   try {
     const d = await createQuickDoc(
       typeof body.title === "string" ? body.title : undefined,
@@ -92,24 +94,25 @@ export async function POST(req: Request) {
       expiresAt: d.expiresAt.toISOString(),
     });
   } catch (e) {
-    if (e instanceof IngestError)
+    if (e instanceof IngestError) {
+      // The create failed ingest validation — refund the budget it reserved.
+      await refundQuickCreate(req);
       return json(ingestStatus(e.code), {
         error: e.code,
         message: e.message,
         hint: "Docs are one self-contained HTML page, 2MB max including inlined assets.",
       });
+    }
     throw e;
   }
 }
 
-// Instant-doc parity for humans (and curl -L): GET creates an empty untitled
-// quick doc and redirects to its ?k= URL. Same code path + rate limit as POST.
-// (The spec's `GET /new` is taken by the signed-in new-doc page — a page.tsx
-// segment can't also be a route handler — so the door lives here.)
-export async function GET(req: Request) {
-  const limit = await checkQuickCreateLimit(req);
-  if (!limit.ok) return rateLimited(limit.cap);
-
-  const d = await createQuickDoc(undefined, "<main></main>");
-  return new Response(null, { status: 303, headers: { location: d.url } });
+// GET must stay side-effect free: link prefetchers and chat unfurl bots GET
+// every URL they encounter, and each hit would otherwise mint a junk doc and
+// burn the shared-IP daily cap. Humans start docs from the site; agents POST.
+export async function GET() {
+  return json(405, {
+    error: "method_not_allowed",
+    hint: "Creating a doc is a POST with a JSON body {\"title\", \"html\"}. Full reference: /agents.md.",
+  });
 }

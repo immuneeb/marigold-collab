@@ -36,7 +36,9 @@ function Notice({ title, body }: { title: string; body: string }) {
 // uses. Claiming burns the key — the old link stops granting access.
 export default async function ClaimPage({ params, searchParams }: Props) {
   const { id } = await params;
-  const { k } = await searchParams;
+  const { k: kRaw } = await searchParams;
+  // A duplicated ?k= param arrives as string[] despite the declared type.
+  const k = Array.isArray(kRaw) ? kRaw[0] : kRaw;
 
   const doc = (
     await db.select().from(docs).where(eq(docs.id, id)).limit(1)

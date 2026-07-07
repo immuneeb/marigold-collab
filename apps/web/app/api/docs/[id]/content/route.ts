@@ -1,7 +1,8 @@
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import {
   authorize,
   deinstrumentHtml,
+  DocClaimedError,
   getBlobStore,
   IngestError,
   quickDocExpiry,
@@ -155,10 +156,16 @@ export async function PUT(req: Request, { params }: Params) {
       html: body.html,
       title: typeof body.title === "string" ? body.title : undefined,
       assistant: "quick-api",
+      requireUnclaimed: true, // burned key must not write into a just-claimed doc
     });
     // Rolling expiry: every successful unclaimed write buys another 30 days.
+    // Guarded on ownerId IS NULL so a claim landing mid-request can never get
+    // an expiry re-stamped onto the now-owned doc.
     const expiresAt = quickDocExpiry();
-    await db.update(docs).set({ expiresAt }).where(eq(docs.id, id));
+    await db
+      .update(docs)
+      .set({ expiresAt })
+      .where(and(eq(docs.id, id), isNull(docs.ownerId)));
     return json(200, {
       versionId: result.versionId,
       ordinal: result.ordinal,
@@ -166,6 +173,8 @@ export async function PUT(req: Request, { params }: Params) {
       expiresAt: expiresAt.toISOString(),
     });
   } catch (e) {
+    if (e instanceof DocClaimedError)
+      return json(403, { error: "claimed", hint: HINTS.claimed });
     if (e instanceof IngestError)
       return json(ingestStatus(e.code), {
         error: e.code,

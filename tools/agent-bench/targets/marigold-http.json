@@ -2,7 +2,7 @@
   "kind": "http",
   "name": "marigold-http",
   "product": "marigold",
-  "status": "PENDING — ships with the quick-start door. None of these endpoints exist yet; run-http.mjs against this target WILL FAIL until the quick-start API lands. Update this descriptor to the real shapes when it ships, then re-run.",
+  "status": "LIVE as of the quick-start door ship (2026-07-06). Shapes verified against apps/web/app/api/quick/route.ts and app/api/docs/[id]/content/route.ts: create returns {docId, slug, url, editKey, claimUrl, expiresAt}; read/update auth via X-Marigold-Key (or ?k=); no If-Match support (conditional stays null); comments remain web/MCP-only (FEEDBACK skips).",
   "baseUrl": "https://marigold-collab-web.vercel.app",
   "contentFormat": "html",
   "notes": [

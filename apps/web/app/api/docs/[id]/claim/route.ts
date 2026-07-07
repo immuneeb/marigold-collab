@@ -12,7 +12,8 @@ type Params = { params: Promise<{ id: string }> };
 // Graduation: valid quick key + signed-in session → the doc becomes a standard
 // private owned doc. The key hash is nulled (burned) in the same statement, so
 // the old ?k= URL stops granting anything — that's the point of claiming.
-// Expiry is cleared too: claiming rescues an expired-but-not-yet-purged doc.
+// Expiry is cleared too: claiming rescues an expired doc (expiry only gates
+// access today; nothing purges rows yet).
 export async function POST(req: Request, { params }: Params) {
   const { id } = await params;
   const actor = await currentActor();
@@ -27,6 +28,13 @@ export async function POST(req: Request, { params }: Params) {
   )[0];
   if (!doc)
     return json(404, { error: "not_found", hint: "No doc with this id." });
+  // Quarantine is an admin kill switch; claiming must not launder a doc out of
+  // it (claim → owner → un-quarantine would hand the abuser the reversal).
+  if (doc.quarantined)
+    return json(403, {
+      error: "quarantined",
+      hint: "This doc has been quarantined by an administrator and cannot be claimed.",
+    });
   if (doc.ownerId)
     return json(403, {
       error: "already_claimed",

@@ -86,10 +86,12 @@ function assertContains(text, needles, phase) {
 function applyRevision(content, rev) {
   const { find, with: w } = rev.replace;
   if (!content.includes(find)) throw new Error(`revision: find-string not in content: ${find}`);
-  let out = content.replace(find, w);
+  // Function replacements: a literal `$&`/`$$` in a spec string must be
+  // inserted verbatim, not expanded as a replacement pattern.
+  let out = content.replace(find, () => w);
   const app = rev.append;
   if (app.beforeMarker && out.includes(app.beforeMarker))
-    out = out.replace(app.beforeMarker, app.content + app.beforeMarker);
+    out = out.replace(app.beforeMarker, () => app.content + app.beforeMarker);
   else out = out + app.content;
   return out;
 }
@@ -236,7 +238,10 @@ async function runOnce(target, fixture, rev, comment, opts, runIndex) {
     run.ok = true;
   } finally {
     run.doc_id = state.id;
-    run.doc_url = state.url;
+    // Results are committed — never persist a live capability URL.
+    run.doc_url = state.url
+      ? state.url.replace(/([?&](?:key|k)=)[^&]+/, "$1…")
+      : state.url;
     // CLEANUP — outside total_ms; best-effort even after a failed phase.
     if (state.id && state.key) {
       if (opts.keep) run.cleanup = "kept (--keep)";

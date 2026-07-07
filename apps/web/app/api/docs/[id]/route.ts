@@ -1,7 +1,8 @@
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import {
   authorize,
   deleteDoc,
+  DocClaimedError,
   IngestError,
   quickDocExpiry,
   renameDoc,
@@ -72,13 +73,27 @@ export async function PATCH(req: Request, { params }: Params) {
     return json(400, { error: "invalid_json" });
   }
 
+  // A quick-key caller must still hold a live grant now that the body has
+  // arrived — the doc may have been claimed (key burned) while it uploaded.
+  if (quick) {
+    const fresh = (
+      await db.select().from(docs).where(eq(docs.id, id)).limit(1)
+    )[0];
+    if (!fresh || !quickKeyGrants(fresh, requestQuickKey(req)))
+      return json(403, {
+        error: "claimed",
+        hint: "The doc was claimed; the quick key no longer grants access.",
+      });
+  }
+
   const extendQuickExpiry = async () => {
     // Rolling expiry: a successful unclaimed write buys another 30 days.
+    // ownerId IS NULL guard: never re-stamp expiry onto a just-claimed doc.
     if (quick) {
       await db
         .update(docs)
         .set({ expiresAt: quickDocExpiry() })
-        .where(eq(docs.id, id));
+        .where(and(eq(docs.id, id), isNull(docs.ownerId)));
     }
   };
 
@@ -97,10 +112,16 @@ export async function PATCH(req: Request, { params }: Params) {
       title: body.title,
       html: body.html,
       files: body.files as never,
+      requireUnclaimed: quick, // key writes fail if the doc was claimed mid-flight
     });
     await extendQuickExpiry();
     return json(200, result);
   } catch (e) {
+    if (e instanceof DocClaimedError)
+      return json(403, {
+        error: "claimed",
+        hint: "The doc was claimed; the quick key no longer grants access.",
+      });
     if (e instanceof IngestError)
       return json(ingestStatus(e.code), { error: e.code, message: e.message });
     throw e;

@@ -68,8 +68,8 @@
     }
   ],
   "round_trips_total": 8,
-  "doc_url": "https://simplemarkdowneditor.com/d/MH3iPoPWlN?key=82STI5rDm52g4VL0r2IAD",
-  "edit_key": "82STI5rDm52g4VL0r2IAD",
+  "doc_url": "https://simplemarkdowneditor.com/d/MH3iPoPWlN?key=…",
+  "edit_key": "…",
   "capabilities_observed": [
     "auth: three tiers \u2014 (a) NO credentials: GET/POST /new returns a fresh anonymous doc + edit key that is the full capability; (b) share link ?key=/X-Share-Key scoped to a role; (c) account Bearer token mgn_\u2026 . When both token+key are sent, the key's narrower role wins.",
     "sharing roles: view / comment / suggest / edit; mint via POST /api/docs/ID/shares, list+revoke owner-only; revoke drops live editing sessions instantly; links can never exceed edit (no escalation)",

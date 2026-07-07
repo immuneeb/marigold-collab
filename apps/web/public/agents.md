@@ -95,10 +95,9 @@ curl -s https://marigold-collab-web.vercel.app/api/quick \
 
 Give the human the `url` (they see the page, can edit, and can claim from the
 banner). Keep `editKey` to revise later. Creation is rate-limited per IP per
-day; on `429`, reuse an existing doc or use an account (MCP).
-
-`GET /api/quick` — creates an empty untitled quick doc and `303`-redirects to
-its `?k=` URL. Handy for humans: opening it in a browser lands on a fresh doc.
+day; on `429`, reuse an existing doc or use an account (MCP). Creating is
+POST-only — `GET /api/quick` answers `405` (so link previews and prefetchers
+can never mint docs by accident).
 
 ### Read content
 

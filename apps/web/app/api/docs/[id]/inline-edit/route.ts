@@ -1,7 +1,8 @@
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import {
   applyInlineEdits,
   authorize,
+  DocClaimedError,
   getBlobStore,
   IngestError,
   type InlineEdit,
@@ -53,6 +54,11 @@ export async function POST(req: Request, { params }: Params) {
     await db.select().from(docs).where(eq(docs.id, id)).limit(1)
   )[0];
   if (!doc) return json(404, { error: "not_found" });
+  // A quick-key caller must still hold a live grant now that the body has
+  // arrived — the doc may have been claimed (key burned) while it uploaded.
+  if (quick && !quickKeyGrants(doc, requestQuickKey(req))) {
+    return json(403, { error: "claimed", hint: "The doc was claimed; the quick key no longer grants access." });
+  }
   // Optimistic concurrency: edits were made against what the user was viewing.
   if (doc.latestVersionId !== body.versionId) {
     return json(409, { error: "doc_changed", message: "Doc changed since you loaded it — reload and retry." });
@@ -70,13 +76,15 @@ export async function POST(req: Request, { params }: Params) {
       docId: id,
       html: newHtml,
       assistant: "inline-edit",
+      requireUnclaimed: quick, // key writes fail if the doc was claimed mid-flight
     });
     // Rolling expiry: a successful unclaimed write buys another 30 days.
+    // ownerId IS NULL guard: never re-stamp expiry onto a just-claimed doc.
     if (quick) {
       await db
         .update(docs)
         .set({ expiresAt: quickDocExpiry() })
-        .where(eq(docs.id, id));
+        .where(and(eq(docs.id, id), isNull(docs.ownerId)));
     }
     return json(200, {
       versionId: result.versionId,
@@ -84,6 +92,8 @@ export async function POST(req: Request, { params }: Params) {
       unchanged: result.unchanged,
     });
   } catch (e) {
+    if (e instanceof DocClaimedError)
+      return json(403, { error: "claimed", hint: "The doc was claimed; the quick key no longer grants access." });
     if (e instanceof IngestError) return json(400, { error: e.message });
     return json(400, { error: (e as Error).message });
   }

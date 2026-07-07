@@ -41,11 +41,18 @@ export function quickKeyGrants(doc: QuickDocRow, key: string | null): boolean {
 }
 
 function clientIpOf(req: Request): string {
-  // Vercel/most proxies: first hop of x-forwarded-for is the client.
+  // Only trust values a platform proxy sets, never the client-controlled end
+  // of the chain. Vercel provides x-vercel-forwarded-for / x-real-ip itself;
+  // for generic proxies that APPEND to x-forwarded-for, the LAST hop is the
+  // one written by the proxy nearest us — the leftmost hop is attacker-chosen
+  // and would let one caller mint a fresh rate-limit bucket per request.
+  const vercel = req.headers.get("x-vercel-forwarded-for");
+  if (vercel) return vercel.split(",")[0]!.trim();
+  const real = req.headers.get("x-real-ip");
+  if (real) return real.trim();
   const fwd = req.headers.get("x-forwarded-for");
-  const first = fwd?.split(",")[0]?.trim();
-  if (first) return first;
-  return req.headers.get("x-real-ip") ?? "local";
+  const last = fwd?.split(",").at(-1)?.trim();
+  return last || "local";
 }
 
 export function quickCreateCap(): number {
@@ -57,14 +64,20 @@ export function quickCreateCap(): number {
  * (UTC). Atomic upsert — concurrent creates can't slip past the cap. Only a
  * salted hash of the IP is ever stored.
  */
+function limitBucket(req: Request): { ipHash: string; day: string } {
+  return {
+    ipHash: sha256Hex(
+      `${process.env.AUTH_SECRET ?? ""}:quick:${clientIpOf(req)}`,
+    ),
+    day: new Date().toISOString().slice(0, 10),
+  };
+}
+
 export async function checkQuickCreateLimit(
   req: Request,
 ): Promise<{ ok: boolean; cap: number }> {
   const cap = quickCreateCap();
-  const ipHash = sha256Hex(
-    `${process.env.AUTH_SECRET ?? ""}:quick:${clientIpOf(req)}`,
-  );
-  const day = new Date().toISOString().slice(0, 10);
+  const { ipHash, day } = limitBucket(req);
   const row = (
     await db
       .insert(quickCreations)
@@ -76,4 +89,16 @@ export async function checkQuickCreateLimit(
       .returning({ count: quickCreations.count })
   )[0];
   return { ok: (row?.count ?? 1) <= cap, cap };
+}
+
+/** Best-effort refund when a reserved creation fails validation (e.g. an
+ * oversized page): the caller shouldn't lose daily budget to a rejection. */
+export async function refundQuickCreate(req: Request): Promise<void> {
+  const { ipHash, day } = limitBucket(req);
+  await db
+    .update(quickCreations)
+    .set({ count: sql`greatest(${quickCreations.count} - 1, 0)` })
+    .where(
+      sql`${quickCreations.ipHash} = ${ipHash} and ${quickCreations.day} = ${day}`,
+    );
 }

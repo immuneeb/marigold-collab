@@ -63,8 +63,10 @@ export default async function ViewerPage({ params, searchParams }: Params) {
 
   // Quick docs: the ?k= URL is the capability — a valid key on a live
   // unclaimed doc grants view + edit, no account. Additive: owned/claimed docs
-  // never take this branch (their key hash is null).
-  const key = k?.trim() || null;
+  // never take this branch (their key hash is null). A duplicated ?k= param
+  // arrives as string[] despite the declared type — take the first.
+  const kOne = Array.isArray(k) ? k[0] : k;
+  const key = kOne?.trim() || null;
   const access = quickAccess(doc, key);
   const quick = access === "granted";
 
