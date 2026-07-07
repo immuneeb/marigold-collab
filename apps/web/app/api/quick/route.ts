@@ -6,6 +6,7 @@ import {
   IngestError,
   quickDocExpiry,
 } from "@marigold/core";
+import { emitDocEvent } from "@/lib/events";
 import { json } from "@/lib/http";
 import { checkQuickCreateLimit, refundQuickCreate } from "@/lib/quick";
 
@@ -40,6 +41,13 @@ async function createQuickDoc(title: string | undefined, html: string): Promise<
     quickKeyHash: hashQuickKey(key),
     expiresAt,
     assistant: "quick-api",
+  });
+  // Feedback feed: the doc's first version is saved — the feed's genesis event.
+  await emitDocEvent({
+    docId: r.docId,
+    type: "version.saved",
+    actor: null, // anonymous quick create
+    payload: { versionId: r.versionId, ordinal: r.ordinal },
   });
   return {
     key,

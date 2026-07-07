@@ -11,6 +11,7 @@ import {
 } from "@marigold/core";
 import { db, docs, docVersions } from "@marigold/db";
 import { currentActor } from "@/lib/actor";
+import { emitDocEvent } from "@/lib/events";
 import { json } from "@/lib/http";
 import { quickAccess, requestQuickKey } from "@/lib/quick";
 
@@ -166,6 +167,15 @@ export async function PUT(req: Request, { params }: Params) {
       .update(docs)
       .set({ expiresAt })
       .where(and(eq(docs.id, id), isNull(docs.ownerId)));
+    // Feedback feed: a content replacement is activity a watcher wants (skip
+    // no-op writes, which roll no new version).
+    if (!result.unchanged)
+      await emitDocEvent({
+        docId: id,
+        type: "content.replaced",
+        actor: null, // quick-key writes are anonymous
+        payload: { versionId: result.versionId, ordinal: result.ordinal },
+      });
     return json(200, {
       versionId: result.versionId,
       ordinal: result.ordinal,

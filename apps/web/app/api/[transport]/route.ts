@@ -10,8 +10,10 @@ import {
   createDoc,
   deinstrumentHtml,
   deleteDoc,
+  type DocEvent,
   getBlobStore,
   IngestError,
+  listEvents,
   MARIGOLD_DIGEST,
   renderOriginFor,
   roleCan,
@@ -25,11 +27,14 @@ import {
   replyToComment,
   setCommentStatus,
 } from "@/lib/comments";
+import { emitDocEvent } from "@/lib/events";
 import { sendInvite } from "@/lib/invite";
 import { verifyAccessToken } from "@/lib/oauth/tokens";
 import { upsertShare } from "@/lib/shares";
 
 export const runtime = "nodejs";
+// get_feedback blocks up to ~50s — lift the default serverless cap.
+export const maxDuration = 60;
 
 interface ToolExtra {
   authInfo?: { extra?: Record<string, unknown> };
@@ -47,6 +52,47 @@ function fail(message: string) {
     content: [{ type: "text" as const, text: `Error: ${message}` }],
     isError: true,
   };
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+// Resolve comment bodies for comment.* events so get_feedback returns the
+// actual feedback text (not just an id the agent would have to fetch). One
+// listComments query covers the whole batch.
+async function enrichEvents(
+  docId: string,
+  events: DocEvent[],
+): Promise<unknown[]> {
+  const needsComments = events.some((e) => e.type.startsWith("comment."));
+  const byId = new Map(
+    needsComments ? (await listComments(docId)).map((c) => [c.id, c]) : [],
+  );
+  return events.map((e) => {
+    const commentId =
+      typeof e.payload?.commentId === "string" ? e.payload.commentId : null;
+    const c = commentId ? byId.get(commentId) : undefined;
+    const base = {
+      seq: e.seq,
+      type: e.type,
+      actor: e.actor,
+      at: e.createdAt,
+      payload: e.payload,
+    };
+    if (!c) return base;
+    const a = (c.anchor ?? {}) as { textQuote?: { exact?: string } };
+    return {
+      ...base,
+      comment: {
+        id: c.id,
+        author: c.authorName ?? "someone",
+        body: c.body,
+        status: c.status,
+        assignedToAi: c.assignedToAi,
+        byAi: c.viaAssistant,
+        anchoredText: a.textQuote?.exact ?? null,
+      },
+    };
+  });
 }
 
 async function currentHtmlOf(latestVersionId: string | null): Promise<string | null> {
@@ -170,6 +216,13 @@ const baseHandler = createMcpHandler(
         if (!userId) return fail("unauthenticated");
         try {
           const r = await createDoc({ ownerId: userId, title, html, assistant: "mcp" });
+          // Feedback feed: the doc's first version is saved (feed genesis event).
+          await emitDocEvent({
+            docId: r.docId,
+            type: "version.saved",
+            actor: userId,
+            payload: { versionId: r.versionId, ordinal: r.ordinal },
+          });
           return ok({
             docId: r.docId,
             slug: r.slug,
@@ -491,6 +544,58 @@ const baseHandler = createMcpHandler(
         if (!allowed) return fail("not authorized");
         await setCommentStatus(commentId, "resolved");
         return ok({ ok: true });
+      },
+    );
+
+    // ── get_feedback (feedback-loop events feed) ──────────────────────────────
+    // Keep this LAST so future tool additions and this one don't collide on the
+    // same merge lines. Blocks until new activity lands on a doc, then returns
+    // it — the MCP twin of GET /api/docs/:id/events long-poll.
+    server.registerTool(
+      "get_feedback",
+      {
+        title: "Get feedback (wait for new activity)",
+        description:
+          "Block until new activity lands on a doc — a human comment, a resolve, or a content change — then return those events. This closes the feedback loop: after you share or update a doc, call get_feedback and it returns the moment someone comments, instead of you waiting for the human to prompt you again. sinceSeq is your cursor (omit or 0 = from the start; pass back the returned `latest` to continue where you left off). It returns immediately if there's already activity after sinceSeq; otherwise it waits up to waitSeconds (default 30, max 50) and returns an empty list on timeout — just call it again to keep watching. comment.created/comment.resolved events include the comment's author and body so you can act on the feedback directly (then reply_to_comment and resolve_comment).",
+        inputSchema: {
+          docId: z.string(),
+          sinceSeq: z
+            .number()
+            .int()
+            .min(0)
+            .optional()
+            .describe("Cursor: return events with seq greater than this (default 0)"),
+          waitSeconds: z
+            .number()
+            .int()
+            .min(0)
+            .max(50)
+            .optional()
+            .describe("Max seconds to block waiting for activity (default 30, max 50)"),
+        },
+      },
+      async ({ docId, sinceSeq, waitSeconds }, extra: ToolExtra) => {
+        const userId = userIdOf(extra);
+        if (!userId) return fail("unauthenticated");
+        const actor = await actorForUserId(userId);
+        const { ok: allowed } = await authorize(docId, actor, "view");
+        if (!allowed) return fail("not authorized to view this doc");
+
+        const since = sinceSeq ?? 0;
+        const wait = Math.min(Math.max(waitSeconds ?? 30, 0), 50);
+        const deadline = Date.now() + wait * 1000;
+        for (;;) {
+          const { events, latest } = await listEvents({ docId, sinceSeq: since });
+          if (events.length > 0 || Date.now() >= deadline) {
+            // Resume from the last delivered event when truncated; else the head.
+            const cursor = events.length ? events[events.length - 1]!.seq : latest;
+            return ok({
+              events: await enrichEvents(docId, events),
+              latest: cursor,
+            });
+          }
+          await sleep(500);
+        }
       },
     );
   },

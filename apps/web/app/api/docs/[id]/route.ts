@@ -11,6 +11,7 @@ import {
 } from "@marigold/core";
 import { db, docs } from "@marigold/db";
 import { currentActor } from "@/lib/actor";
+import { emitDocEvent } from "@/lib/events";
 import { json } from "@/lib/http";
 import { quickKeyGrants, requestQuickKey } from "@/lib/quick";
 
@@ -115,6 +116,15 @@ export async function PATCH(req: Request, { params }: Params) {
       requireUnclaimed: quick, // key writes fail if the doc was claimed mid-flight
     });
     await extendQuickExpiry();
+    // Feedback feed: content was replaced (skip no-op writes, which roll no
+    // new version).
+    if (!result.unchanged)
+      await emitDocEvent({
+        docId: id,
+        type: "content.replaced",
+        actor: quick ? null : actor.userId,
+        payload: { versionId: result.versionId, ordinal: result.ordinal },
+      });
     return json(200, result);
   } catch (e) {
     if (e instanceof DocClaimedError)

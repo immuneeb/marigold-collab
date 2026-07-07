@@ -5,6 +5,7 @@ import {
   listComments,
   versionBelongsToDoc,
 } from "@/lib/comments";
+import { emitDocEvent } from "@/lib/events";
 import { json } from "@/lib/http";
 
 export const runtime = "nodejs";
@@ -47,6 +48,13 @@ export async function POST(req: Request, { params }: Params) {
     versionId: body.versionId,
     anchor: body.anchor,
     body: String(body.body).slice(0, 4000),
+  });
+  // Feedback feed: a new human comment is the signal a watching agent blocks on.
+  await emitDocEvent({
+    docId: id,
+    type: "comment.created",
+    actor: actor.userId,
+    payload: { commentId, assignedToAi: false },
   });
   return json(200, { id: commentId });
 }

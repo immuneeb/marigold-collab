@@ -11,6 +11,7 @@ import {
 } from "@marigold/core";
 import { db, docs } from "@marigold/db";
 import { currentActor } from "@/lib/actor";
+import { emitDocEvent } from "@/lib/events";
 import { json } from "@/lib/http";
 import { quickKeyGrants, requestQuickKey } from "@/lib/quick";
 
@@ -86,6 +87,14 @@ export async function POST(req: Request, { params }: Params) {
         .set({ expiresAt: quickDocExpiry() })
         .where(and(eq(docs.id, id), isNull(docs.ownerId)));
     }
+    // Feedback feed: an inline edit replaces content (skip no-op writes).
+    if (!result.unchanged)
+      await emitDocEvent({
+        docId: id,
+        type: "content.replaced",
+        actor: quick ? null : actor.userId,
+        payload: { versionId: result.versionId, ordinal: result.ordinal },
+      });
     return json(200, {
       versionId: result.versionId,
       ordinal: result.ordinal,

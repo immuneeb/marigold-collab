@@ -2,6 +2,7 @@ import { desc, eq } from "drizzle-orm";
 import { createDoc, IngestError } from "@marigold/core";
 import { db, docs } from "@marigold/db";
 import { currentActor } from "@/lib/actor";
+import { emitDocEvent } from "@/lib/events";
 import { json } from "@/lib/http";
 
 export const runtime = "nodejs";
@@ -27,6 +28,13 @@ export async function POST(req: Request) {
       title: body.title,
       html: body.html,
       files: body.files as never,
+    });
+    // Feedback feed: the doc's first version is saved — the feed's genesis event.
+    await emitDocEvent({
+      docId: result.docId,
+      type: "version.saved",
+      actor: actor.userId,
+      payload: { versionId: result.versionId, ordinal: result.ordinal },
     });
     return json(200, result);
   } catch (e) {

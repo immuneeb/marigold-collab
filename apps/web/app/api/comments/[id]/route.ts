@@ -6,6 +6,7 @@ import {
   setCommentAiAssignment,
   setCommentStatus,
 } from "@/lib/comments";
+import { emitDocEvent } from "@/lib/events";
 import { json } from "@/lib/http";
 
 export const runtime = "nodejs";
@@ -34,6 +35,14 @@ export async function PATCH(req: Request, { params }: Params) {
     if (!canModerate && !isAuthor)
       return json(actor.userId ? 403 : 401, { error: "forbidden" });
     await setCommentStatus(id, body.status);
+    // Feedback feed: a resolve tells a watching agent the thread is closed.
+    if (body.status === "resolved")
+      await emitDocEvent({
+        docId: c.docId,
+        type: "comment.resolved",
+        actor: actor.userId,
+        payload: { commentId: id },
+      });
   }
 
   if (typeof body.assignToAi === "boolean") {
