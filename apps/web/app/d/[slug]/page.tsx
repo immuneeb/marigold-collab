@@ -22,10 +22,12 @@ function Notice({
   title,
   body,
   action,
+  tone,
 }: {
   title: string;
   body: string;
   action?: { href: string; label: string };
+  tone?: "expired";
 }) {
   return (
     <main className="container">
@@ -34,7 +36,7 @@ function Notice({
           🌼 Marigold
         </Link>
       </header>
-      <div className="empty">
+      <div className={tone === "expired" ? "empty empty-expired" : "empty"}>
         <p>
           <strong>{title}</strong>
         </p>
@@ -74,9 +76,13 @@ export default async function ViewerPage({ params, searchParams }: Params) {
     if (key && access === "expired") {
       return (
         <Notice
-          title="Quick doc expired"
-          body="This unclaimed doc passed its 30-day expiry. Claim it into an account to restore and keep it."
-          action={{ href: `/claim/${doc.id}?k=${key}`, label: "Claim this doc" }}
+          tone="expired"
+          title="⏳ This quick doc has expired"
+          body="This unclaimed quick doc passed its expiry, so its link no longer opens it. Sign in and claim it to restore the doc, keep it permanently, and control who can view or edit it."
+          action={{
+            href: `/claim/${doc.id}?k=${key}`,
+            label: "Sign in and claim to restore",
+          }}
         />
       );
     }
@@ -131,7 +137,11 @@ export default async function ViewerPage({ params, searchParams }: Params) {
       signedIn={!!actor.userId}
       quick={
         quick
-          ? { editKey: key as string, claimUrl: `/claim/${doc.id}?k=${key}` }
+          ? {
+              editKey: key as string,
+              claimUrl: `/claim/${doc.id}?k=${key}`,
+              expiresAt: doc.expiresAt ? doc.expiresAt.toISOString() : null,
+            }
           : undefined
       }
     />
