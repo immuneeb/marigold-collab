@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { sha256Hex, verifyQuickKey } from "@marigold/core";
 import { db, quickCreations } from "@marigold/db";
@@ -60,6 +61,22 @@ export function quickCreateCap(): number {
 }
 
 /**
+ * Admin bypass for the per-IP creation cap: a request carrying
+ * `X-Marigold-Admin: <MARIGOLD_ADMIN_TOKEN>` skips rate limiting entirely.
+ * For internal tooling, load tests, and the benchmark harness. Disabled unless
+ * the env var is set; compared timing-safely so the header can't be probed.
+ */
+export function isAdminBypass(req: Request): boolean {
+  const token = process.env.MARIGOLD_ADMIN_TOKEN;
+  if (!token) return false;
+  const presented = req.headers.get("x-marigold-admin");
+  if (!presented) return false;
+  const a = Buffer.from(presented);
+  const b = Buffer.from(token);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+/**
  * Count an unclaimed-doc creation against the caller's hashed IP for today
  * (UTC). Atomic upsert — concurrent creates can't slip past the cap. Only a
  * salted hash of the IP is ever stored.
@@ -77,6 +94,8 @@ export async function checkQuickCreateLimit(
   req: Request,
 ): Promise<{ ok: boolean; cap: number }> {
   const cap = quickCreateCap();
+  // Admin bypass: no counting, always allowed (internal/benchmark traffic).
+  if (isAdminBypass(req)) return { ok: true, cap };
   const { ipHash, day } = limitBucket(req);
   const row = (
     await db
@@ -94,6 +113,8 @@ export async function checkQuickCreateLimit(
 /** Best-effort refund when a reserved creation fails validation (e.g. an
  * oversized page): the caller shouldn't lose daily budget to a rejection. */
 export async function refundQuickCreate(req: Request): Promise<void> {
+  // Bypass traffic never incremented a bucket — nothing to refund.
+  if (isAdminBypass(req)) return;
   const { ipHash, day } = limitBucket(req);
   await db
     .update(quickCreations)
