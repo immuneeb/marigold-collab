@@ -279,7 +279,10 @@ textarea {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 14px;
+  /* fixed height: long titles truncate, never wrap (MUN-28) */
+  flex: none;
+  height: 52px;
+  padding: 0 14px;
   border-bottom: 1px solid var(--line);
   background: var(--card);
   gap: 12px;
@@ -290,9 +293,20 @@ textarea {
   align-items: center;
   gap: 10px;
 }
+.viewer-left {
+  flex: 1 1 auto;
+  min-width: 0; /* lets the title shrink + ellipsize */
+}
+.viewer-right {
+  flex: none;
+}
 .viewer-title {
   font-weight: 600;
   letter-spacing: -0.01em;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 /* Editable title: reads as plain text until hovered/focused. Overrides the
    global input styling (full width, padding, border). */
@@ -309,6 +323,7 @@ textarea {
   font: inherit;
   font-weight: 600;
   letter-spacing: -0.01em;
+  text-overflow: ellipsis;
 }
 .viewer-title-input:hover {
   border-color: var(--line);
@@ -319,6 +334,8 @@ textarea {
   outline: 2px solid var(--accent-soft);
 }
 .ugc-pill {
+  flex: none;
+  white-space: nowrap;
   font-size: 11px;
   color: var(--marigold-dark);
   background: var(--accent-soft);
@@ -541,12 +558,32 @@ textarea {
   padding: 12px;
 }
 .cmt-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   font-weight: 650;
   font-size: 13px;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--muted);
   padding: 4px 4px 10px;
+}
+.cmt-close {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  cursor: pointer;
+  padding: 2px 7px;
+  border-radius: 6px;
+}
+.cmt-close:hover {
+  background: var(--accent-soft);
+  color: var(--fg);
+}
+/* mobile-only scrim behind the comments drawer (see media block below) */
+.cmt-backdrop {
+  display: none;
 }
 .cmt-empty {
   padding: 8px 4px;
@@ -807,6 +844,7 @@ code {
   padding: 1px 6px;
   border-radius: 5px;
   font-size: 0.9em;
+  overflow-wrap: anywhere; /* long URLs/prompts must not overflow on phones */
 }
 
 /* manage page */
@@ -844,4 +882,122 @@ select {
 }
 .share-add .btn-secondary {
   width: auto;
+}
+
+/* ── mobile app shell (≤720px) ─────────────────────────────────────────────
+   MUN-28. Published docs handle their own responsiveness — this styles only
+   Marigold's chrome (viewer, dashboard, landing). Keep the breakpoint in
+   sync with MOBILE_MQ in d/[slug]/viewer-client.tsx. */
+@media (max-width: 720px) {
+  /* viewer bar: compact; secondary nav hidden (the wordmark links home) */
+  .viewer-bar {
+    padding: 0 10px;
+    gap: 8px;
+  }
+  .viewer-left,
+  .viewer-right {
+    gap: 6px;
+  }
+  .ugc-pill,
+  .viewer-hide-mobile {
+    display: none;
+  }
+  .viewer-right .btn-ghost,
+  .viewer-right .btn-secondary {
+    padding: 6px 9px;
+    font-size: 13px;
+    white-space: nowrap;
+  }
+  .viewer-title-input {
+    min-width: 48px;
+  }
+
+  /* comments: a bottom drawer that slides up, not a sidebar */
+  .cmt-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(28, 25, 23, 0.32);
+    z-index: 29;
+  }
+  .cmt-sidebar {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: auto;
+    height: min(60dvh, 480px);
+    border-left: 0;
+    border-top: 1px solid var(--line);
+    border-radius: 16px 16px 0 0;
+    box-shadow: 0 -10px 30px rgba(28, 25, 23, 0.18);
+    z-index: 30;
+    padding-bottom: calc(12px + env(safe-area-inset-bottom));
+    animation: cmt-rise 0.22s ease-out;
+  }
+  /* pre-hydration the drawer defaults to closed on mobile; viewer-client
+     resolves the real open state right after mount */
+  .cmt-sidebar.cmt-indeterminate {
+    display: none;
+  }
+  /* grab-handle affordance */
+  .cmt-sidebar::before {
+    content: "";
+    display: block;
+    width: 36px;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--line);
+    margin: 0 auto 8px;
+  }
+
+  /* claim banner: actions drop below the message */
+  .claimbar {
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+
+  /* dashboard + landing */
+  .container {
+    padding: 20px 16px 64px;
+  }
+  .landing {
+    padding: 0 16px 48px;
+  }
+  .landing-nav {
+    flex-wrap: wrap;
+    row-gap: 6px;
+  }
+  .landing-nav .wordmark {
+    white-space: nowrap;
+  }
+  .landing-nav-links {
+    gap: 10px;
+  }
+  .landing-nav-links .landing-link {
+    font-size: 13px;
+  }
+  .landing-nav-links .landing-link,
+  .landing-nav-links .btn {
+    white-space: nowrap;
+  }
+  .hero {
+    padding: 36px 0 30px;
+  }
+  .hero-cta {
+    flex-wrap: wrap;
+  }
+  .share-add {
+    flex-wrap: wrap;
+  }
+}
+@keyframes cmt-rise {
+  from {
+    transform: translateY(24px);
+    opacity: 0.5;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
 }

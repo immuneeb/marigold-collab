@@ -22,6 +22,9 @@ interface Comment {
 }
 type Rect = { x: number; y: number; w: number; h: number };
 
+// Must match the app-shell mobile breakpoint in globals.css (MUN-28).
+const MOBILE_MQ = "(max-width: 720px)";
+
 export function ViewerClient(props: {
   docId: string;
   slug: string;
@@ -44,7 +47,14 @@ export function ViewerClient(props: {
   const [draft, setDraft] = useState<{ anchor: Anchor } | null>(null);
   const [sel, setSel] = useState<{ anchor: Anchor; rect: Rect } | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
-  const [open, setOpen] = useState(true);
+  // Comments panel. `null` = pre-hydration: the panel renders with the
+  // `cmt-indeterminate` class and CSS decides — visible on desktop, hidden on
+  // mobile — so the SSR paint is right on both form factors with no flash.
+  // The mount effect then resolves it to a real boolean (closed on mobile).
+  const [open, setOpen] = useState<boolean | null>(null);
+  useEffect(() => {
+    setOpen((o) => (o === null ? !window.matchMedia(MOBILE_MQ).matches : o));
+  }, []);
   const [showResolved, setShowResolved] = useState(false);
   // Auto-save machinery: edits stream in from the agent, get queued, and flush
   // serially; each save rolls a new version, so we chain versionId forward.
@@ -350,7 +360,8 @@ export function ViewerClient(props: {
           {props.canEdit && !props.quick && (
             <Link
               href={`/d/${props.slug}/edit`}
-              className="btn-ghost"
+              // hidden on mobile: source editing is a desktop task
+              className="btn-ghost viewer-hide-mobile"
               title="Edit the HTML source"
             >
               Source
@@ -362,7 +373,8 @@ export function ViewerClient(props: {
             </Link>
           )}
           {props.signedIn ? (
-            <Link href="/" className="btn-ghost">
+            // hidden on mobile: the 🌼 wordmark already links home
+            <Link href="/" className="btn-ghost viewer-hide-mobile">
               Dashboard
             </Link>
           ) : (
@@ -463,9 +475,29 @@ export function ViewerClient(props: {
           </div>
         </div>
 
-        {open && (
-          <aside className="cmt-sidebar">
-            <div className="cmt-head">Comments</div>
+        {/* Mobile-only backdrop behind the bottom drawer (display:none on
+            desktop); tapping it closes the drawer. */}
+        {open === true && (
+          <div
+            className="cmt-backdrop"
+            onClick={() => setOpen(false)}
+            aria-hidden="true"
+          />
+        )}
+        {open !== false && (
+          <aside
+            className={`cmt-sidebar${open === null ? " cmt-indeterminate" : ""}`}
+          >
+            <div className="cmt-head">
+              <span>Comments</span>
+              <button
+                className="cmt-close"
+                aria-label="Close comments"
+                onClick={() => setOpen(false)}
+              >
+                ✕
+              </button>
+            </div>
 
             {draft && (
               <DraftBox
