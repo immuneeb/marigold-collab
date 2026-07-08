@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { comments, db, docVersions, newId, users } from "@marigold/db";
 
 export interface CommentRow {
@@ -12,7 +12,37 @@ export interface CommentRow {
   status: string;
   assignedToAi: boolean;
   viaAssistant: boolean;
+  // Authored by a quick-doc URL holder (no account) under a self-supplied name.
+  guest: boolean;
   createdAt: Date;
+}
+
+/**
+ * Normalize a guest-supplied display name to plain text: strip control/format
+ * chars and angle brackets, collapse whitespace, trim. Returns null unless the
+ * result is 1–40 chars — the caller turns that into a 400 `author_required`.
+ */
+export function sanitizeGuestName(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const cleaned = raw
+    .replace(/[\p{C}<>]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (cleaned.length < 1 || cleaned.length > 40) return null;
+  return cleaned;
+}
+
+/**
+ * Impersonation guard for guest comments: is `name` already an account's
+ * display name (case-insensitive)? A guest may not adopt a real user's name.
+ */
+export async function displayNameInUse(name: string): Promise<boolean> {
+  const rows = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(sql`lower(${users.displayName}) = lower(${name})`)
+    .limit(1);
+  return rows.length > 0;
 }
 
 /** Is `versionId` a version of `docId`? (validates comment anchoring target) */
@@ -32,10 +62,13 @@ export async function versionBelongsToDoc(
 
 export async function createComment(opts: {
   docId: string;
-  authorId: string;
+  // Null for a guest (quick-doc) author; their name lives in `authorName`.
+  authorId: string | null;
   versionId: string;
   anchor: unknown;
   body: string;
+  authorName?: string | null;
+  guest?: boolean;
 }): Promise<string> {
   const id = newId("cmt");
   await db.insert(comments).values({
@@ -44,6 +77,8 @@ export async function createComment(opts: {
     anchoredVersionId: opts.versionId,
     parentId: null,
     authorId: opts.authorId,
+    authorName: opts.authorName ?? null,
+    guest: opts.guest ?? false,
     body: opts.body,
     anchor: opts.anchor,
     status: "open",
@@ -53,9 +88,12 @@ export async function createComment(opts: {
 
 export async function replyToComment(opts: {
   parentId: string;
-  authorId: string;
+  // Null for a guest (quick-doc) reply; their name lives in `authorName`.
+  authorId: string | null;
   body: string;
   viaAssistant?: boolean;
+  authorName?: string | null;
+  guest?: boolean;
 }): Promise<{ id: string; docId: string } | null> {
   const parent = (
     await db
@@ -72,6 +110,8 @@ export async function replyToComment(opts: {
     anchoredVersionId: parent.anchoredVersionId,
     parentId: parent.id,
     authorId: opts.authorId,
+    authorName: opts.authorName ?? null,
+    guest: opts.guest ?? false,
     body: opts.body,
     anchor: parent.anchor,
     status: "open",
@@ -98,12 +138,17 @@ export async function listComments(
       parentId: comments.parentId,
       anchoredVersionId: comments.anchoredVersionId,
       authorId: comments.authorId,
-      authorName: users.displayName,
+      // Account authors show their profile name; guests show the name they
+      // supplied (stored on the comment) — coalesce picks whichever is set.
+      authorName: sql<
+        string | null
+      >`coalesce(${users.displayName}, ${comments.authorName})`,
       body: comments.body,
       anchor: comments.anchor,
       status: comments.status,
       assignedToAi: comments.assignedToAi,
       viaAssistant: comments.viaAssistant,
+      guest: comments.guest,
       createdAt: comments.createdAt,
     })
     .from(comments)

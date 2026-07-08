@@ -217,3 +217,8 @@ follow the account model (owner, email grants, optional public link).
   `GET /api/docs/:id/comments`, and address them (revise → reply → resolve).
   On owned docs, editors can assign a thread to AI (✨); connect via MCP
   (`/api/mcp`) — `get_feedback` blocks for it and `list_docs` counts the queue.
+- On an **unclaimed quick doc**, the URL holder can comment too (no account):
+  `POST /api/docs/:id/comments` with the key (`?k=` / `X-Marigold-Key`) and a
+  body `{ "anchor", "versionId", "body", "author" }` — `author` (1–40 chars) is
+  the guest display name; the comment is badged `guest`. Read them back with
+  `GET /api/docs/:id/comments` + the key.
