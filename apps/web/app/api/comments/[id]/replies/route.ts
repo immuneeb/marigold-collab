@@ -5,6 +5,7 @@ import { currentActor } from "@/lib/actor";
 import {
   displayNameInUse,
   getComment,
+  guestNameInUseOnDoc,
   replyToComment,
   sanitizeGuestName,
 } from "@/lib/comments";
@@ -44,18 +45,31 @@ export async function POST(req: Request, { params }: Params) {
   }
   if (!body.body) return json(400, { error: "body required" });
 
-  // ── Guest (quick-key) reply ────────────────────────────────────────────────
+  // Quick-key writes re-verify under a fresh read (claimed/quarantined mid-flight).
   if (quick) {
-    // TOCTOU: re-verify the grant now the body arrived (claimed mid-flight).
     const fresh = (
       await db.select().from(docs).where(eq(docs.id, parent.docId)).limit(1)
     )[0];
-    if (!fresh || !quickKeyGrants(fresh, requestQuickKey(req))) {
+    if (!fresh || fresh.quarantined) {
+      return json(403, {
+        error: "quarantined",
+        hint: "This doc has been quarantined by an administrator.",
+      });
+    }
+    if (!quickKeyGrants(fresh, requestQuickKey(req))) {
       return json(403, {
         error: "claimed",
         hint: "The doc was claimed; the quick key no longer grants access.",
       });
     }
+  }
+
+  // A signed-in URL holder replies under their account; only a signed-out
+  // holder is a guest.
+  const asGuest = quick && !actor.userId;
+
+  // ── Guest (signed-out quick-key) reply ─────────────────────────────────────
+  if (asGuest) {
     const authorName = sanitizeGuestName(body.author);
     if (!authorName) {
       return json(400, {
@@ -63,10 +77,13 @@ export async function POST(req: Request, { params }: Params) {
         hint: "Guest replies need an `author` display name (1–40 chars of plain text).",
       });
     }
-    if (await displayNameInUse(authorName)) {
+    if (
+      (await displayNameInUse(authorName)) ||
+      (await guestNameInUseOnDoc(parent.docId, authorName))
+    ) {
       return json(409, {
         error: "name_taken",
-        hint: "That name belongs to a Marigold account — pick a different guest name.",
+        hint: "That name is already in use on this doc — pick a different one.",
       });
     }
     const reply = await replyToComment({
@@ -87,11 +104,20 @@ export async function POST(req: Request, { params }: Params) {
     return json(200, { id: reply.id, guest: true });
   }
 
-  // ── Account reply (unchanged) ──────────────────────────────────────────────
+  // ── Account reply (ACL-authorized, or a signed-in quick-key holder) ─────────
   const reply = await replyToComment({
     parentId: id,
     authorId: actor.userId as string,
     body: String(body.body).slice(0, 4000),
   });
-  return json(200, { id: reply?.id });
+  if (!reply) return json(404, { error: "not_found" });
+  // Feedback feed: an account reply is activity a watching agent wants too —
+  // emit it just like the guest path, so equivalent activity wakes it uniformly.
+  await emitDocEvent({
+    docId: reply.docId,
+    type: "comment.created",
+    actor: actor.userId ?? null,
+    payload: { commentId: reply.id, assignedToAi: false },
+  });
+  return json(200, { id: reply.id });
 }

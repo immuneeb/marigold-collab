@@ -45,6 +45,25 @@ export async function displayNameInUse(name: string): Promise<boolean> {
   return rows.length > 0;
 }
 
+/**
+ * Second impersonation guard: is `name` already used by a GUEST on this doc?
+ * Without it, a second link-holder could post under an existing guest's name,
+ * so a reader can't tell two people apart. Case-insensitive, this doc only.
+ */
+export async function guestNameInUseOnDoc(
+  docId: string,
+  name: string,
+): Promise<boolean> {
+  const rows = await db
+    .select({ id: comments.id })
+    .from(comments)
+    .where(
+      sql`${comments.docId} = ${docId} and ${comments.guest} = true and lower(${comments.authorName}) = lower(${name})`,
+    )
+    .limit(1);
+  return rows.length > 0;
+}
+
 /** Is `versionId` a version of `docId`? (validates comment anchoring target) */
 export async function versionBelongsToDoc(
   docId: string,

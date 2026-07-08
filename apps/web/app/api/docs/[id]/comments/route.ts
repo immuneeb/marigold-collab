@@ -5,6 +5,7 @@ import { currentActor } from "@/lib/actor";
 import {
   createComment,
   displayNameInUse,
+  guestNameInUseOnDoc,
   listComments,
   sanitizeGuestName,
   versionBelongsToDoc,
@@ -72,20 +73,34 @@ export async function POST(req: Request, { params }: Params) {
     return json(400, { error: "versionId does not belong to this doc" });
   }
 
-  // ── Guest (quick-key) comment ──────────────────────────────────────────────
+  // Quick-key writes re-verify under a fresh read now the body has arrived — the
+  // doc may have been claimed (key burned) or quarantined while it uploaded,
+  // exactly as the content/patch write routes re-check.
   if (quick) {
-    // TOCTOU: re-verify the grant now the body has arrived — the doc may have
-    // been claimed (key burned) while the request uploaded, exactly as the
-    // content/patch write routes re-check.
     const fresh = (
       await db.select().from(docs).where(eq(docs.id, id)).limit(1)
     )[0];
-    if (!fresh || !quickKeyGrants(fresh, requestQuickKey(req))) {
+    if (!fresh || fresh.quarantined) {
+      return json(403, {
+        error: "quarantined",
+        hint: "This doc has been quarantined by an administrator.",
+      });
+    }
+    if (!quickKeyGrants(fresh, requestQuickKey(req))) {
       return json(403, {
         error: "claimed",
         hint: "The doc was claimed; the quick key no longer grants access.",
       });
     }
+  }
+
+  // A SIGNED-IN URL holder comments under their account (never forced to be a
+  // guest, so they're never blocked from their own name); only a signed-out
+  // holder is a guest.
+  const asGuest = quick && !actor.userId;
+
+  // ── Guest (signed-out quick-key) comment ───────────────────────────────────
+  if (asGuest) {
     const authorName = sanitizeGuestName(body.author);
     if (!authorName) {
       return json(400, {
@@ -93,11 +108,15 @@ export async function POST(req: Request, { params }: Params) {
         hint: "Guest comments need an `author` display name (1–40 chars of plain text).",
       });
     }
-    // Impersonation guard: a guest may not adopt a real account's display name.
-    if (await displayNameInUse(authorName)) {
+    // Impersonation guards: not a real account's name, and not a name another
+    // guest is already using on this doc.
+    if (
+      (await displayNameInUse(authorName)) ||
+      (await guestNameInUseOnDoc(id, authorName))
+    ) {
       return json(409, {
         error: "name_taken",
-        hint: "That name belongs to a Marigold account — pick a different guest name.",
+        hint: "That name is already in use on this doc — pick a different one.",
       });
     }
     const commentId = await createComment({
@@ -120,7 +139,7 @@ export async function POST(req: Request, { params }: Params) {
     return json(200, { id: commentId, guest: true });
   }
 
-  // ── Account comment (unchanged) ────────────────────────────────────────────
+  // ── Account comment (ACL-authorized, or a signed-in quick-key holder) ───────
   const commentId = await createComment({
     docId: id,
     authorId: actor.userId as string,

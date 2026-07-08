@@ -686,6 +686,22 @@ textarea {
   font-size: 13px;
   margin-bottom: 6px;
 }
+.cmt-error {
+  margin: 8px 0;
+  padding: 8px 10px;
+  font-size: 12.5px;
+  border-radius: 8px;
+  color: #b3261e;
+  background: #fdece9;
+  border: 1px solid #f4c7c0;
+}
+@media (prefers-color-scheme: dark) {
+  .cmt-error {
+    color: #ffb4a8;
+    background: #3a1512;
+    border-color: #5c241d;
+  }
+}
 .cmt-body {
   font-size: 13.5px;
   margin: 6px 0;
@@ -1031,4 +1047,61 @@ select {
     transform: none;
     opacity: 1;
   }
+}
+
+/* keyboard shortcuts overlay (?) */
+.kbd-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: rgba(28, 25, 23, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+.kbd-card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: 0 12px 40px rgba(28, 25, 23, 0.25);
+  padding: 16px 18px;
+  width: 100%;
+  max-width: 460px;
+  max-height: 80dvh;
+  overflow-y: auto;
+}
+.kbd-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-weight: 650;
+  padding-bottom: 8px;
+  margin-bottom: 6px;
+  border-bottom: 1px solid var(--line);
+}
+.kbd-row {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  padding: 6px 0;
+}
+.kbd-keys {
+  flex: none;
+  width: 96px;
+  white-space: nowrap;
+}
+.kbd-what {
+  font-size: 13.5px;
+  color: var(--muted);
+}
+kbd {
+  display: inline-block;
+  font: 600 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--marigold-dark);
+  background: var(--accent-soft);
+  border: 1px solid var(--line);
+  border-bottom-width: 2px;
+  border-radius: 6px;
+  padding: 4px 6px;
 }

@@ -58,6 +58,7 @@ export function ViewerClient(props: {
     setOpen((o) => (o === null ? !window.matchMedia(MOBILE_MQ).matches : o));
   }, []);
   const [showResolved, setShowResolved] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
   // Auto-save machinery: edits stream in from the agent, get queued, and flush
   // serially; each save rolls a new version, so we chain versionId forward.
   const versionIdRef = useRef(props.versionId);
@@ -73,14 +74,19 @@ export function ViewerClient(props: {
   // handler still closes over the edited title, so it must skip the save.
   const cancelTitleRef = useRef(false);
 
-  // Guest commenting on an unclaimed quick doc: the URL holder comments with the
-  // quick key (X-Marigold-Key) under a self-supplied name (asked once, kept in
-  // localStorage). Account docs are unchanged — `props.canComment` is the ACL.
-  const guest = !!props.quick;
-  const canComment = props.canComment || guest;
+  // Commenting on an unclaimed quick doc: the URL holder comments with the quick
+  // key (X-Marigold-Key). A signed-out holder is a GUEST — self-supplied name,
+  // asked once and kept in localStorage. A SIGNED-IN holder comments under their
+  // account (no name field), so they're never blocked from their own name.
+  // Account docs are unchanged — `props.canComment` is the ACL.
+  const guest = !!props.quick && !props.signedIn;
+  const canComment = props.canComment || !!props.quick;
   // Resolve / assign-to-AI stay account-only: guests never see those controls
   // (and the API rejects them anyway). Owned docs keep their exact behavior.
   const canModerate = props.canComment;
+  // Surfaces a comment/reply POST failure (name taken, doc claimed, …) instead
+  // of silently swallowing it — a lost comment is the opposite of feedback.
+  const [commentError, setCommentError] = useState<string | null>(null);
   const [guestName, setGuestName] = useState("");
   useEffect(() => {
     if (!props.quick) return;
@@ -100,6 +106,12 @@ export function ViewerClient(props: {
       /* non-fatal: the name just won't persist across reloads */
     }
   }, []);
+
+  // A stale post-failure message clears when the commenter moves to a new draft
+  // target (new selection or cancel) — but NOT on a failed submit (draft stays).
+  useEffect(() => {
+    setCommentError(null);
+  }, [draft]);
 
   const roots = useMemo(
     () => comments.filter((c) => !c.parentId),
@@ -138,9 +150,12 @@ export function ViewerClient(props: {
         ? { headers: { "x-marigold-key": props.quick.editKey } }
         : undefined,
     )
-      .then((res) => (res.ok ? res.json() : { comments: [] }))
-      .catch(() => ({ comments: [] }));
-    setComments(r.comments ?? []);
+      .then((res) => (res.ok ? res.json() : null))
+      .catch(() => null);
+    // Keep the existing thread on a transient/403 failure (e.g. the doc was
+    // claimed mid-session and the key is now burned) — don't blank the sidebar,
+    // which would make every comment look deleted.
+    if (r && Array.isArray(r.comments)) setComments(r.comments);
   }, [props.docId, props.quick]);
 
   const trackedIds = useMemo(
@@ -219,6 +234,7 @@ export function ViewerClient(props: {
       if (!res.ok) throw new Error(data.message ?? data.error ?? "Rename failed");
       savedTitleRef.current = data.title ?? "";
       setTitle(data.title ?? "");
+      document.title = data.title || "Untitled"; // keep the tab label current
       setSaveState("saved");
       setTimeout(() => setSaveState((s) => (s === "saved" ? "idle" : s)), 2500);
     } catch (e) {
@@ -243,6 +259,9 @@ export function ViewerClient(props: {
         setOpen(true);
       } else if (d.type === "selection") {
         setSel((d.sel as { anchor: Anchor; rect: Rect } | null) ?? null);
+      } else if (d.type === "key") {
+        // Shortcut pressed while focus was inside the doc iframe.
+        shortcutRef.current(d as { key: string });
       } else if (d.type === "edited") {
         const id = String(d.id ?? "");
         const html = String(d.html ?? "");
@@ -296,12 +315,149 @@ export function ViewerClient(props: {
     setOpen(true);
   }
 
-  async function submitDraft(body: string, name?: string) {
-    if (!draft || !body.trim()) return;
+  function selectThread(c: Comment) {
+    setSelected(c.id);
+    setOpen(true);
+    if (c.anchor?.marigoldId) post({ type: "scrollTo", id: c.anchor.marigoldId });
+    // The card may not exist until the sidebar opens on this very render.
+    requestAnimationFrame(() => {
+      document
+        .querySelector(`[data-thread="${c.id}"]`)
+        ?.scrollIntoView({ block: "nearest" });
+    });
+  }
+
+  function navComment(dir: 1 | -1) {
+    if (openRoots.length === 0) return;
+    const idx = openRoots.findIndex((c) => c.id === selected);
+    const next =
+      idx === -1
+        ? openRoots[dir === 1 ? 0 : openRoots.length - 1]
+        : openRoots[(idx + dir + openRoots.length) % openRoots.length];
+    if (next) selectThread(next);
+  }
+
+  function focusReply() {
+    const c = openRoots.find((x) => x.id === selected) ?? openRoots[0];
+    if (!c) return;
+    selectThread(c);
+    requestAnimationFrame(() => {
+      document
+        .querySelector<HTMLInputElement>(`[data-reply-for="${c.id}"]`)
+        ?.focus();
+    });
+  }
+
+  function resolveSelected() {
+    if (!canModerate || !selected) return;
+    const c = roots.find((x) => x.id === selected);
+    if (c) void setStatus(c.id, c.status === "resolved" ? "open" : "resolved");
+  }
+
+  // ── keyboard shortcuts (Docs/Figma-familiar) ──
+  // One dispatcher consumes both window keydowns and keys the anchor agent
+  // forwards from the sandboxed iframe (focus in there never reaches this
+  // window). Ref-latest pattern: listeners attach once, the body always sees
+  // this render's state. Returns true when the key was consumed.
+  type KeyLike = {
+    key: string;
+    code?: string;
+    shiftKey?: boolean;
+    metaKey?: boolean;
+    ctrlKey?: boolean;
+    altKey?: boolean;
+  };
+  const shortcutRef = useRef<(k: KeyLike) => boolean>(() => false);
+  shortcutRef.current = (k) => {
+    const mod = !!k.metaKey || !!k.ctrlKey;
+    if (k.key === "Escape") {
+      // Most-transient thing first, one layer per press.
+      if (helpOpen) setHelpOpen(false);
+      else if (commenting) toggleComment();
+      else if (draft) setDraft(null);
+      else if (sel) {
+        setSel(null);
+        post({ type: "clearSelection" });
+      } else if (selected) setSelected(null);
+      else return false;
+      return true;
+    }
+    if (k.key === "?" && !mod && !k.altKey) {
+      setHelpOpen((v) => !v);
+      return true;
+    }
+    // ⌘/Ctrl+⌥+M is Google Docs' insert-comment chord; C is Figma's.
+    if (mod && k.altKey && k.code === "KeyM") {
+      if (!canComment) return false;
+      if (sel) startDraftFromSelection();
+      else toggleComment();
+      return true;
+    }
+    if (mod || k.altKey) return false;
+    switch (k.key.toLowerCase()) {
+      case "c":
+        if (k.shiftKey) {
+          setOpen((o) => o !== true);
+          return true;
+        }
+        if (!canComment) return false;
+        if (sel) startDraftFromSelection();
+        else toggleComment();
+        return true;
+      case "n":
+        navComment(k.shiftKey ? -1 : 1);
+        return true;
+      case "r":
+        if (!canComment || k.shiftKey) return false;
+        focusReply();
+        return true;
+      case "e":
+        if (!canModerate || k.shiftKey) return false;
+        resolveSelected();
+        return true;
+    }
+    return false;
+  };
+
+  useEffect(() => {
+    function typing(t: EventTarget | null) {
+      return (
+        t instanceof HTMLElement &&
+        (t.isContentEditable ||
+          t.tagName === "INPUT" ||
+          t.tagName === "TEXTAREA" ||
+          t.tagName === "SELECT")
+      );
+    }
+    function onKeyDown(e: KeyboardEvent) {
+      if (typing(e.target)) return; // composers handle their own keys
+      if (shortcutRef.current(e)) e.preventDefault();
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
+  // Turn a failed comment/reply POST into a visible message and keep the text,
+  // so a rejection (name taken, doc claimed, bad name) never silently drops
+  // feedback. Returns true only when the write actually landed.
+  async function errorFrom(res: Response): Promise<string> {
+    const fallback = "Couldn't post — please try again.";
+    try {
+      const j = await res.json();
+      return j.hint || j.error || fallback;
+    } catch {
+      return fallback;
+    }
+  }
+  async function submitDraft(body: string, name?: string): Promise<boolean> {
+    if (!draft || !body.trim()) return false;
     const author = (name ?? guestName).trim();
-    if (props.quick && !author) return; // guests must name themselves
-    if (props.quick) rememberGuestName(author);
-    await fetch(`/api/docs/${props.docId}/comments`, {
+    if (guest && !author) {
+      setCommentError("Enter your name to comment.");
+      return false;
+    }
+    if (guest) rememberGuestName(author);
+    const res = await fetch(`/api/docs/${props.docId}/comments`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -311,18 +467,31 @@ export function ViewerClient(props: {
         anchor: draft.anchor,
         body,
         versionId: versionIdRef.current,
-        ...(props.quick ? { author } : {}),
+        ...(guest ? { author } : {}),
       }),
-    });
+    }).catch(() => null);
+    if (!res || !res.ok) {
+      setCommentError(res ? await errorFrom(res) : "Network error — not posted.");
+      return false; // keep the draft so the comment isn't lost
+    }
+    setCommentError(null);
     setDraft(null);
     await refresh();
+    return true;
   }
-  async function sendReply(parentId: string, body: string, name?: string) {
-    if (!body.trim()) return;
+  async function sendReply(
+    parentId: string,
+    body: string,
+    name?: string,
+  ): Promise<boolean> {
+    if (!body.trim()) return false;
     const author = (name ?? guestName).trim();
-    if (props.quick && !author) return; // guests must name themselves
-    if (props.quick) rememberGuestName(author);
-    await fetch(`/api/comments/${parentId}/replies`, {
+    if (guest && !author) {
+      setCommentError("Enter your name to reply.");
+      return false;
+    }
+    if (guest) rememberGuestName(author);
+    const res = await fetch(`/api/comments/${parentId}/replies`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -330,10 +499,16 @@ export function ViewerClient(props: {
       },
       body: JSON.stringify({
         body,
-        ...(props.quick ? { author } : {}),
+        ...(guest ? { author } : {}),
       }),
-    });
+    }).catch(() => null);
+    if (!res || !res.ok) {
+      setCommentError(res ? await errorFrom(res) : "Network error — not posted.");
+      return false;
+    }
+    setCommentError(null);
     await refresh();
+    return true;
   }
   async function setStatus(id: string, status: "open" | "resolved") {
     await fetch(`/api/comments/${id}`, {
@@ -403,11 +578,16 @@ export function ViewerClient(props: {
             <button
               className={commenting ? "btn-secondary btn-inline" : "btn-ghost"}
               onClick={toggleComment}
+              title="Add a comment — C"
             >
               {commenting ? "Click an element…" : "+ Comment"}
             </button>
           )}
-          <button className="btn-ghost" onClick={() => setOpen((o) => !o)}>
+          <button
+            className="btn-ghost"
+            onClick={() => setOpen((o) => !o)}
+            title="Show or hide comments — ⇧C"
+          >
             Comments {openCount > 0 ? `(${openCount})` : ""}
           </button>
           {props.canEdit && !props.quick && (
@@ -552,6 +732,12 @@ export function ViewerClient(props: {
               </button>
             </div>
 
+            {commentError && (
+              <div className="cmt-error" role="alert">
+                {commentError}
+              </div>
+            )}
+
             {draft && (
               <DraftBox
                 preview={draft.anchor?.textQuote?.exact ?? ""}
@@ -565,7 +751,7 @@ export function ViewerClient(props: {
             {openRoots.length === 0 && resolvedRoots.length === 0 && !draft && (
               <p className="muted small cmt-empty">
                 {canComment
-                  ? `Select text and hit the 💬+ button to comment.${props.canEdit ? " Click text to edit it — changes save automatically. Hover an element for move / duplicate / add / delete." : ""}`
+                  ? `Select text and hit the 💬+ button to comment.${props.canEdit ? " Click text to edit it — changes save automatically. Hover an element for move / duplicate / add / delete." : ""} Press ? for keyboard shortcuts.`
                   : "No comments yet."}
               </p>
             )}
@@ -626,6 +812,55 @@ export function ViewerClient(props: {
             )}
           </aside>
         )}
+      </div>
+
+      {helpOpen && <ShortcutHelp onClose={() => setHelpOpen(false)} />}
+    </div>
+  );
+}
+
+// Keep in sync with the dispatcher above and the local viewer's copy
+// (packages/local/src/shell.ts) — same bindings, one muscle memory.
+const SHORTCUTS: [string, string][] = [
+  ["C", "New comment — uses your selection, or click an element to place it"],
+  ["⌘⌥M", "New comment (Google Docs chord; Ctrl+Alt+M on Windows)"],
+  ["⇧C", "Show or hide the comments panel"],
+  ["N / ⇧N", "Next / previous comment"],
+  ["R", "Reply to the selected comment"],
+  ["E", "Resolve or reopen the selected comment"],
+  ["⇧↵", "Post, while writing a comment"],
+  ["Esc", "Cancel comment mode, discard a draft, or close this"],
+  ["?", "Keyboard shortcuts"],
+];
+
+function ShortcutHelp({ onClose }: { onClose: () => void }) {
+  return (
+    <div
+      className="kbd-overlay"
+      role="dialog"
+      aria-label="Keyboard shortcuts"
+      onClick={onClose}
+    >
+      <div className="kbd-card" onClick={(e) => e.stopPropagation()}>
+        <div className="kbd-title">
+          <span>Keyboard shortcuts</span>
+          <button className="cmt-close" aria-label="Close" onClick={onClose}>
+            ✕
+          </button>
+        </div>
+        {SHORTCUTS.map(([keys, what]) => (
+          <div className="kbd-row" key={keys}>
+            <span className="kbd-keys">
+              {keys.split(" / ").map((k, i) => (
+                <span key={k}>
+                  {i > 0 && <span className="muted"> / </span>}
+                  <kbd>{k}</kbd>
+                </span>
+              ))}
+            </span>
+            <span className="kbd-what">{what}</span>
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -776,7 +1011,7 @@ function DraftBox(props: {
   guest?: boolean;
   defaultName?: string;
   onCancel: () => void;
-  onSubmit: (body: string, name?: string) => void;
+  onSubmit: (body: string, name?: string) => Promise<boolean>;
 }) {
   const [v, setV] = useState("");
   const [name, setName] = useState(props.defaultName ?? "");
@@ -802,16 +1037,27 @@ function DraftBox(props: {
         placeholder="Add a comment…"
         value={v}
         onChange={(e) => setV(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && (e.shiftKey || e.metaKey || e.ctrlKey)) {
+            e.preventDefault();
+            if (!nameMissing && v.trim()) props.onSubmit(v, name);
+          } else if (e.key === "Escape") {
+            e.preventDefault();
+            e.stopPropagation();
+            props.onCancel();
+          }
+        }}
       />
       <div className="cmt-actions">
         <button
           className="btn-secondary btn-inline"
           disabled={nameMissing || !v.trim()}
           onClick={() => props.onSubmit(v, name)}
+          title="Post — ⇧↵"
         >
           Comment
         </button>
-        <button className="btn-ghost" onClick={props.onCancel}>
+        <button className="btn-ghost" onClick={props.onCancel} title="Esc">
           Cancel
         </button>
       </div>
@@ -830,7 +1076,7 @@ function Thread(props: {
   guest?: boolean;
   guestName?: string;
   onSelect: () => void;
-  onReply: (body: string, name?: string) => void;
+  onReply: (body: string, name?: string) => Promise<boolean>;
   onResolve: () => void;
   onAssignAi: () => void;
 }) {
@@ -846,6 +1092,7 @@ function Thread(props: {
   return (
     <div
       className={`cmt-thread${props.selected ? " sel" : ""}${root.status === "resolved" ? " resolved" : ""}`}
+      data-thread={root.id}
       onClick={props.onSelect}
     >
       {root.anchor?.textQuote?.exact && (
@@ -878,12 +1125,20 @@ function Thread(props: {
           )}
           <input
             placeholder="Reply…"
+            data-reply-for={root.id}
             value={reply}
             onChange={(e) => setReply(e.target.value)}
-            onKeyDown={(e) => {
+            onKeyDown={async (e) => {
               if (e.key === "Enter") {
-                props.onReply(reply, name);
-                setReply("");
+                e.preventDefault();
+                // Don't submit — or clear the text — if a guest hasn't named
+                // themselves; the reply would be dropped silently otherwise.
+                if ((needName && !name.trim()) || !reply.trim()) return;
+                const ok = await props.onReply(reply, name);
+                if (ok) setReply(""); // keep the text if the post failed
+              } else if (e.key === "Escape") {
+                e.stopPropagation();
+                e.currentTarget.blur();
               }
             }}
           />
@@ -906,6 +1161,11 @@ function Thread(props: {
           {props.canModerate && (
             <button
               className="btn-ghost"
+              title={
+                root.status === "resolved"
+                  ? "Reopen — E when selected"
+                  : "Resolve — E when selected"
+              }
               onClick={(e) => {
                 e.stopPropagation();
                 props.onResolve();
