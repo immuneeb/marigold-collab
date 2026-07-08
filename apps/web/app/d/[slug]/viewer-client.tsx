@@ -677,21 +677,22 @@ function ClaimBanner({
             {urgent ? "⏳" : "⚡"}
           </span>
           <strong>{headline}</strong>
+          {/* The date carries the separator so mobile can hide it and leave
+              a clean "Expires in 30 days". */}
           {absolute && (
             <time className="claimbar-when" dateTime={expiresAt ?? undefined}>
-              {absolute}
+              {absolute} ·
             </time>
           )}
-          {countdown && <span className="claimbar-count">· {countdown}</span>}
+          {countdown && <span className="claimbar-count">{countdown}</span>}
         </div>
         <div className="claimbar-explain">
-          This is a quick doc — anyone with the link can edit, and it disappears
-          when it expires. Claim it to keep it and control access.
+          Anyone with the link can edit — claim to keep it.
         </div>
       </div>
       <div className="claimbar-actions">
         <Link href={claimUrl} className="btn btn-inline claimbar-cta">
-          Create account or log in to claim
+          Claim this doc
         </Link>
         {!urgent && (
           <button
