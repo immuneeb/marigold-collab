@@ -57,6 +57,13 @@
       "when": 1783426805534,
       "tag": "0007_swift_falcon",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1783471286623,
+      "tag": "0008_bored_jasper_sitwell",
+      "breakpoints": true
     }
   ]
 }

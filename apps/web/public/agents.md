@@ -164,3 +164,8 @@ follow the account model (owner, email grants, optional public link).
   kept, never dropped).
 - Comments and the feedback loop (assign-to-AI, replies, resolve) live in the
   account model — connect via MCP (`/api/mcp`) to read and address feedback.
+- On an **unclaimed quick doc**, the URL holder can comment too (no account):
+  `POST /api/docs/:id/comments` with the key (`?k=` / `X-Marigold-Key`) and a
+  body `{ "anchor", "versionId", "body", "author" }` — `author` (1–40 chars) is
+  the guest display name; the comment is badged `guest`. Read them back with
+  `GET /api/docs/:id/comments` + the key.

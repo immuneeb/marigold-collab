@@ -99,6 +99,8 @@ async function enrichEvents(
       comment: {
         id: c.id,
         author: c.authorName ?? "someone",
+        // Authored by a quick-doc URL holder (no account) vs an account user.
+        guest: c.guest,
         body: c.body,
         status: c.status,
         assignedToAi: c.assignedToAi,
@@ -565,6 +567,8 @@ const baseHandler = createMcpHandler(
             threadId: c.parentId ?? c.id,
             isReply: !!c.parentId,
             author: c.authorName ?? "someone",
+            // Authored by a quick-doc URL holder (no account) vs an account user.
+            guest: c.guest,
             body: c.body,
             status: c.status,
             assignedToAi: c.assignedToAi,

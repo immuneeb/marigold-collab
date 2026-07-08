@@ -18,6 +18,8 @@ interface Comment {
   status: string;
   assignedToAi: boolean;
   viaAssistant: boolean;
+  // Authored by a quick-doc URL holder (no account) under a self-supplied name.
+  guest: boolean;
   createdAt: string;
 }
 type Rect = { x: number; y: number; w: number; h: number };
@@ -61,6 +63,34 @@ export function ViewerClient(props: {
   // handler still closes over the edited title, so it must skip the save.
   const cancelTitleRef = useRef(false);
 
+  // Guest commenting on an unclaimed quick doc: the URL holder comments with the
+  // quick key (X-Marigold-Key) under a self-supplied name (asked once, kept in
+  // localStorage). Account docs are unchanged — `props.canComment` is the ACL.
+  const guest = !!props.quick;
+  const canComment = props.canComment || guest;
+  // Resolve / assign-to-AI stay account-only: guests never see those controls
+  // (and the API rejects them anyway). Owned docs keep their exact behavior.
+  const canModerate = props.canComment;
+  const [guestName, setGuestName] = useState("");
+  useEffect(() => {
+    if (!props.quick) return;
+    try {
+      const saved = localStorage.getItem("marigold:guestName");
+      if (saved) setGuestName(saved);
+    } catch {
+      /* localStorage may be unavailable (private mode) — ask each time */
+    }
+  }, [props.quick]);
+  const rememberGuestName = useCallback((name: string) => {
+    const n = name.trim().slice(0, 40);
+    setGuestName(n);
+    try {
+      localStorage.setItem("marigold:guestName", n);
+    } catch {
+      /* non-fatal: the name just won't persist across reloads */
+    }
+  }, []);
+
   const roots = useMemo(
     () => comments.filter((c) => !c.parentId),
     [comments],
@@ -90,11 +120,18 @@ export function ViewerClient(props: {
   }, [post, props.canEdit]);
 
   const refresh = useCallback(async () => {
-    const r = await fetch(`/api/docs/${props.docId}/comments`)
+    // On an unclaimed quick doc the key is the view capability — send it so a
+    // guest (no session) can load the thread they're commenting in.
+    const r = await fetch(
+      `/api/docs/${props.docId}/comments`,
+      props.quick
+        ? { headers: { "x-marigold-key": props.quick.editKey } }
+        : undefined,
+    )
       .then((res) => (res.ok ? res.json() : { comments: [] }))
       .catch(() => ({ comments: [] }));
     setComments(r.comments ?? []);
-  }, [props.docId]);
+  }, [props.docId, props.quick]);
 
   const trackedIds = useMemo(
     () =>
@@ -249,26 +286,42 @@ export function ViewerClient(props: {
     setOpen(true);
   }
 
-  async function submitDraft(body: string) {
+  async function submitDraft(body: string, name?: string) {
     if (!draft || !body.trim()) return;
+    const author = (name ?? guestName).trim();
+    if (props.quick && !author) return; // guests must name themselves
+    if (props.quick) rememberGuestName(author);
     await fetch(`/api/docs/${props.docId}/comments`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: {
+        "content-type": "application/json",
+        ...(props.quick ? { "x-marigold-key": props.quick.editKey } : {}),
+      },
       body: JSON.stringify({
         anchor: draft.anchor,
         body,
         versionId: versionIdRef.current,
+        ...(props.quick ? { author } : {}),
       }),
     });
     setDraft(null);
     await refresh();
   }
-  async function sendReply(parentId: string, body: string) {
+  async function sendReply(parentId: string, body: string, name?: string) {
     if (!body.trim()) return;
+    const author = (name ?? guestName).trim();
+    if (props.quick && !author) return; // guests must name themselves
+    if (props.quick) rememberGuestName(author);
     await fetch(`/api/comments/${parentId}/replies`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ body }),
+      headers: {
+        "content-type": "application/json",
+        ...(props.quick ? { "x-marigold-key": props.quick.editKey } : {}),
+      },
+      body: JSON.stringify({
+        body,
+        ...(props.quick ? { author } : {}),
+      }),
     });
     await refresh();
   }
@@ -336,7 +389,7 @@ export function ViewerClient(props: {
           {saveState === "saved" && (
             <span className="muted small savestate">All changes saved ✓</span>
           )}
-          {props.canComment && (
+          {canComment && (
             <button
               className={commenting ? "btn-secondary btn-inline" : "btn-ghost"}
               onClick={toggleComment}
@@ -429,7 +482,7 @@ export function ViewerClient(props: {
             }}
           />
           <div className="overlay">
-            {props.canComment && sel && (
+            {canComment && sel && (
               <button
                 className="margin-add"
                 style={{ top: Math.max(4, sel.rect.y + sel.rect.h / 2 - 16) }}
@@ -470,6 +523,8 @@ export function ViewerClient(props: {
             {draft && (
               <DraftBox
                 preview={draft.anchor?.textQuote?.exact ?? ""}
+                guest={guest}
+                defaultName={guestName}
                 onCancel={() => setDraft(null)}
                 onSubmit={submitDraft}
               />
@@ -477,7 +532,7 @@ export function ViewerClient(props: {
 
             {openRoots.length === 0 && resolvedRoots.length === 0 && !draft && (
               <p className="muted small cmt-empty">
-                {props.canComment
+                {canComment
                   ? `Select text and hit the 💬+ button to comment.${props.canEdit ? " Click text to edit it — changes save automatically. Hover an element for move / duplicate / add / delete." : ""}`
                   : "No comments yet."}
               </p>
@@ -494,9 +549,12 @@ export function ViewerClient(props: {
                   if (c.anchor?.marigoldId)
                     post({ type: "scrollTo", id: c.anchor.marigoldId });
                 }}
-                canComment={props.canComment}
+                canComment={canComment}
+                canModerate={canModerate}
                 canEdit={props.canEdit}
-                onReply={(b) => sendReply(c.id, b)}
+                guest={guest}
+                guestName={guestName}
+                onReply={(b, n) => sendReply(c.id, b, n)}
                 onResolve={() => setStatus(c.id, "resolved")}
                 onAssignAi={() => setAssignAi(c.id, !c.assignedToAi)}
               />
@@ -522,9 +580,12 @@ export function ViewerClient(props: {
                         if (c.anchor?.marigoldId)
                           post({ type: "scrollTo", id: c.anchor.marigoldId });
                       }}
-                      canComment={props.canComment}
+                      canComment={canComment}
+                      canModerate={canModerate}
                       canEdit={props.canEdit}
-                      onReply={(b) => sendReply(c.id, b)}
+                      guest={guest}
+                      guestName={guestName}
+                      onReply={(b, n) => sendReply(c.id, b, n)}
                       onResolve={() => setStatus(c.id, "open")}
                       onAssignAi={() => setAssignAi(c.id, !c.assignedToAi)}
                     />
@@ -677,14 +738,30 @@ function ClaimBanner({
 
 function DraftBox(props: {
   preview: string;
+  // Guest (quick-doc) commenter: prompt for a display name, prefilled from the
+  // last-used one. Account commenters never see the name field.
+  guest?: boolean;
+  defaultName?: string;
   onCancel: () => void;
-  onSubmit: (body: string) => void;
+  onSubmit: (body: string, name?: string) => void;
 }) {
   const [v, setV] = useState("");
+  const [name, setName] = useState(props.defaultName ?? "");
+  const nameMissing = !!props.guest && !name.trim();
   return (
     <div className="cmt-thread draft">
       {props.preview && (
         <div className="cmt-anchor">“{props.preview.slice(0, 80)}”</div>
+      )}
+      {props.guest && (
+        <input
+          className="cmt-guestname"
+          placeholder="Your name"
+          aria-label="Your name"
+          maxLength={40}
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+        />
       )}
       <textarea
         autoFocus
@@ -694,7 +771,11 @@ function DraftBox(props: {
         onChange={(e) => setV(e.target.value)}
       />
       <div className="cmt-actions">
-        <button className="btn-secondary btn-inline" onClick={() => props.onSubmit(v)}>
+        <button
+          className="btn-secondary btn-inline"
+          disabled={nameMissing || !v.trim()}
+          onClick={() => props.onSubmit(v, name)}
+        >
           Comment
         </button>
         <button className="btn-ghost" onClick={props.onCancel}>
@@ -710,15 +791,25 @@ function Thread(props: {
   replies: Comment[];
   selected: boolean;
   canComment: boolean;
+  // Account-only moderation (resolve / assign-to-AI). False for guests.
+  canModerate: boolean;
   canEdit: boolean;
+  guest?: boolean;
+  guestName?: string;
   onSelect: () => void;
-  onReply: (body: string) => void;
+  onReply: (body: string, name?: string) => void;
   onResolve: () => void;
   onAssignAi: () => void;
 }) {
   const [reply, setReply] = useState("");
+  const [name, setName] = useState(props.guestName ?? "");
+  useEffect(() => {
+    if (props.guestName) setName(props.guestName);
+  }, [props.guestName]);
   const { root } = props;
   const orphaned = root.status === "orphaned";
+  // Guests name themselves once; after that the saved name is reused silently.
+  const needName = !!props.guest && !(props.guestName ?? "").trim();
   return (
     <div
       className={`cmt-thread${props.selected ? " sel" : ""}${root.status === "resolved" ? " resolved" : ""}`}
@@ -741,18 +832,29 @@ function Thread(props: {
       ))}
       {props.canComment && (
         <div className="cmt-reply">
+          {needName && (
+            <input
+              className="cmt-guestname"
+              placeholder="Your name"
+              aria-label="Your name"
+              maxLength={40}
+              value={name}
+              onClick={(e) => e.stopPropagation()}
+              onChange={(e) => setName(e.target.value)}
+            />
+          )}
           <input
             placeholder="Reply…"
             value={reply}
             onChange={(e) => setReply(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter") {
-                props.onReply(reply);
+                props.onReply(reply, name);
                 setReply("");
               }
             }}
           />
-          {props.canEdit && root.status !== "resolved" && (
+          {props.canModerate && props.canEdit && root.status !== "resolved" && (
             <button
               className="btn-ghost"
               title={
@@ -768,15 +870,17 @@ function Thread(props: {
               {root.assignedToAi ? "✨ Unassign" : "✨ AI"}
             </button>
           )}
-          <button
-            className="btn-ghost"
-            onClick={(e) => {
-              e.stopPropagation();
-              props.onResolve();
-            }}
-          >
-            {root.status === "resolved" ? "Reopen" : "Resolve"}
-          </button>
+          {props.canModerate && (
+            <button
+              className="btn-ghost"
+              onClick={(e) => {
+                e.stopPropagation();
+                props.onResolve();
+              }}
+            >
+              {root.status === "resolved" ? "Reopen" : "Resolve"}
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -787,6 +891,11 @@ function CommentBody({ c, reply }: { c: Comment; reply?: boolean }) {
   return (
     <div className={reply ? "cmt-body reply" : "cmt-body"}>
       <span className="cmt-author">{c.authorName ?? "Someone"}</span>
+      {c.guest && (
+        <span className="guest-chip" title="Commented as a guest via the doc link">
+          guest
+        </span>
+      )}
       {c.viaAssistant && (
         <span className="ai-chip" title="Written by an AI agent via MCP">
           AI

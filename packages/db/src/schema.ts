@@ -164,6 +164,12 @@ export const comments = pgTable(
     ),
     parentId: text("parent_id"), // null = thread root (self-ref, app-enforced)
     authorId: text("author_id").references(() => users.id),
+    // Guest (quick-doc) authors have no account row: a URL holder comments as a
+    // guest with a self-supplied display name (stored here) and `guest` badges
+    // them. Both are null/false for account authors (whose name comes from the
+    // joined `users` row). Additive/nullable — no backfill.
+    authorName: text("author_name"),
+    guest: boolean("guest").notNull().default(false),
     body: text("body").notNull(),
     anchor: jsonb("anchor").notNull(), // composite selector (spec §8.1)
     status: text("status").notNull().default("open"), // 'open' | 'resolved' | 'orphaned'
