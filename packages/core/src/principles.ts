@@ -168,16 +168,23 @@ load-bearing diagrams, three reading depths.
 CSS/JS/SVG; images as data: URIs; external scripts, fonts, and images are
 blocked by CSP and fail silently. Keep DOM structure stable across updates so
 readers' comments re-anchor. For small edits prefer patch_doc (send only the
-changed elements by marigoldId) over re-sending the whole page. After sharing,
-check get_comments, revise, then resolve_comment.
+changed elements by marigoldId) over re-sending the whole page.
 
-3. Feedback loop: editors can assign comments to AI (✨). When the user asks
-to address comments or AI feedback: list_docs shows openAiComments per doc;
-get_comments with assignedToAi=true returns the queue; make the edits with
-update_doc, reply_to_comment with a one-line summary of the change, then
-resolve_comment. The address_feedback prompt runs this end to end. To watch a
-doc live, call get_feedback — it blocks until a human comment or change lands
-(returning the comment text), so you can respond in the same turn.`;
+3. Feedback loop — WATCH the doc after you share or update it. Right after
+create_doc / update_doc / share_doc, call get_feedback(docId): it blocks until
+a human comment or change lands (up to ~50s) and returns the comment text, so
+you handle the reader's response in the same session instead of them waiting
+for someone to re-prompt you. Loop get_feedback to keep listening while the
+user wants you on it. YOU are the listener — if no agent is calling
+get_feedback, feedback just waits. That is safe (the feed is durable: a later
+get_feedback, or list_docs' openAiComments count, always catches up — nothing
+is lost), but it means the reaction only happens while some agent listens. To
+act on feedback: read it (get_feedback, or get_comments with assignedToAi=true
+for the ✨ queue editors flagged for you), make the edits (prefer patch_doc for
+small changes), reply_to_comment with a one-line summary of what changed, then
+resolve_comment. The address_feedback prompt runs this end to end. For
+always-on watching beyond a chat session, the user runs you headless/scheduled
+to drain the queue.`;
 
 const DEFAULT_AUDIENCE = "a sharp generalist who does not know this domain's jargon";
 

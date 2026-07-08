@@ -111,7 +111,9 @@ curl -s "https://marigold-collab-web.vercel.app/api/docs/doc_…/content?k=<key>
 `200`: `{ "html": "...", "title": "...", "versionId": "ver_…", "ordinal": 3 }`
 
 The HTML comes back clean (Marigold's internal instrumentation stripped) —
-edit it and PUT it back.
+edit it and PUT it back. Add `?includeIds=1` to keep each element's
+`data-marigold-id` attribute — you need those ids to target elements with a
+patch (below). `?k=<key>` and the `X-Marigold-Key` header are interchangeable.
 
 ### Replace content
 
@@ -131,6 +133,55 @@ curl -s -X PUT "https://marigold-collab-web.vercel.app/api/docs/doc_…/content"
 `unchanged: true` means the content was byte-identical — no new version. Each
 successful write renews the 30-day expiry. Once a doc is claimed, PUT returns
 `403 claimed` — the owner edits through their account (MCP or dashboard).
+
+### Patch content (cheap updates)
+
+`POST /api/docs/:docId/patch` — quick key only. Change **only** the elements
+that moved, keyed by their `data-marigold-id` (from `GET …/content?includeIds=1`),
+instead of re-sending the whole page. Much cheaper than a full replace on a big
+doc — the payload is the change, not the document. Body:
+`{ "ops": [...], "baseVersionId"?: "ver_…" }`. Ops: `{"op":"replace","marigoldId","html"}`
+(inner content), `{"op":"setText","marigoldId","text"}`, `{"op":"append","marigoldId","html"}`
+(insert after), `{"op":"remove","marigoldId"}`. Ops apply atomically (an unknown
+id fails the whole patch). Pass `baseVersionId` (the version you read) for
+optimistic concurrency — a `409 doc_changed` means someone edited in between;
+re-read and reapply.
+
+```sh
+curl -s -X POST "https://marigold-collab-web.vercel.app/api/docs/doc_…/patch" \
+  -H 'content-type: application/json' -H 'X-Marigold-Key: <key>' \
+  -d '{"ops":[{"op":"setText","marigoldId":"mg-1a2b3c4d5e","text":"Q3 revenue: $4.2M"}]}'
+```
+
+`200`: `{ "versionId": "ver_…", "ordinal": 5, "unchanged": false, "applied": 1 }`
+
+### Watch for feedback (so you're the listener)
+
+A doc's activity — comments, resolves, content changes — is an append-only,
+per-doc feed. **After you share a doc, watch it**, so a human comment reaches
+you in ~1 s instead of waiting until someone re-runs you. Nothing reacts unless
+an agent is listening; the feed is durable, so a later read always catches up,
+but the *live* response only happens while you watch.
+
+`GET /api/docs/:docId/events?since=SEQ&wait=N` — long-poll (view access: quick
+key or session). Returns the moment an event lands after `SEQ`, or an empty list
+after `wait` seconds (max 55). `since=latest` starts from now.
+
+```sh
+# watch loop: block up to 50s, act on what returns, advance the cursor, repeat
+SEQ=0
+while true; do
+  RES=$(curl -s "https://marigold-collab-web.vercel.app/api/docs/doc_…/events?since=$SEQ&wait=50&k=<key>")
+  echo "$RES" | jq -c '.events[]'      # comment.created / comment.resolved / content.replaced / version.saved
+  SEQ=$(echo "$RES" | jq '.latest')
+done
+```
+
+`200`: `{ "events": [{"seq":7,"type":"comment.created","actor":"alice","at":…,"payload":{…}}], "latest": 7 }`.
+On a comment, read it (`GET …/comments`), revise (patch or PUT), and if it was
+a request, reply and resolve. MCP clients use the `get_feedback` tool for the
+same loop. (On an unclaimed quick doc, comments are guest-authored — pass an
+`author` name alongside the key.)
 
 ### Claim (graduate) a doc
 
@@ -162,5 +213,7 @@ follow the account model (owner, email grants, optional public link).
   elements and re-anchor across versions; in-place edits preserve anchors,
   while reordering or re-nesting sections orphans them (orphaned comments are
   kept, never dropped).
-- Comments and the feedback loop (assign-to-AI, replies, resolve) live in the
-  account model — connect via MCP (`/api/mcp`) to read and address feedback.
+- Feedback: watch a doc live with the events feed (above), read threads with
+  `GET /api/docs/:id/comments`, and address them (revise → reply → resolve).
+  On owned docs, editors can assign a thread to AI (✨); connect via MCP
+  (`/api/mcp`) — `get_feedback` blocks for it and `list_docs` counts the queue.

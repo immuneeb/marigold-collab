@@ -236,7 +236,7 @@ const baseHandler = createMcpHandler(
         description:
           "Create a new Marigold doc and return its URL. Two ways to author: (1) full-control — pass `html`, one self-contained page (inline all CSS/JS/SVG, data: URIs for images; external scripts, fonts, and images are blocked by CSP and fail silently). (2) themed — pass a `theme` id plus `content` (the body's inner HTML: your semantic <h1>/<p>/<table>/<svg>… with NO <style> or page scaffold), and the server wraps it in the theme's stylesheet into a self-contained page. Themed docs can be updated content-only (send `content`, not `html`) and raise the quality floor. Valid theme ids: " +
           THEME_IDS +
-          ". Lead with the core insight and carry the structure in a diagram (call start_analysis for the full authoring guide).",
+          ". Lead with the core insight and carry the structure in a diagram (call start_analysis for the full authoring guide). After you share the returned URL, call get_feedback(docId) to WATCH for the reader's response and act on it in the same session — otherwise no one is listening and their comment just waits.",
         inputSchema: {
           title: z.string().optional(),
           html: z
@@ -273,6 +273,7 @@ const baseHandler = createMcpHandler(
             ordinal: r.ordinal,
             theme: r.theme ?? null,
             themeVersion: r.themeVersion ?? null,
+            watch: `Share ${r.url}, then call get_feedback({docId: "${r.docId}"}) to wait for the reader's first comment and respond in this session.`,
           });
         } catch (e) {
           if (e instanceof ThemeError) return fail(e.message);
@@ -441,7 +442,7 @@ const baseHandler = createMcpHandler(
       {
         title: "Share doc",
         description:
-          "Grant a person access to a doc by email, and/or set link visibility. Public docs are viewable (published version) by anyone with the link, no sign-in; editing and commenting always require an explicit grant.",
+          "Grant a person access to a doc by email, and/or set link visibility. Public docs are viewable (published version) by anyone with the link, no sign-in; editing and commenting always require an explicit grant. After sharing, call get_feedback(docId) to WATCH for the recipient's comments and respond in the same session — the reaction only happens while an agent is listening.",
         inputSchema: {
           docId: z.string(),
           email: z.string().optional(),
