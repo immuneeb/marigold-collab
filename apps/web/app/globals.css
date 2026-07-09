@@ -702,6 +702,68 @@ textarea {
     border-color: #5c241d;
   }
 }
+/* "Commenting as <name> · change" — the guest identity indicator. */
+.cmt-asname {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 4px 0 8px;
+}
+.cmt-asname strong {
+  color: var(--fg);
+  font-weight: 600;
+}
+.cmt-asname-change {
+  margin-left: 6px;
+  padding: 0;
+  background: none;
+  border: none;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+}
+/* One-time guest name modal (asked on first comment; then persisted). */
+.name-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.4);
+}
+.name-modal {
+  width: 100%;
+  max-width: 360px;
+  background: var(--bg, #fff);
+  color: var(--fg, #1f2328);
+  border: 1px solid var(--border, #e2e2df);
+  border-radius: 12px;
+  padding: 18px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
+}
+.name-modal-title {
+  font-size: 15px;
+  font-weight: 650;
+}
+.name-modal-sub {
+  font-size: 12.5px;
+  color: var(--muted);
+  margin: 4px 0 12px;
+}
+.name-modal-input {
+  width: 100%;
+  padding: 8px 10px;
+  font-size: 14px;
+  border: 1px solid var(--border, #d7d7d2);
+  border-radius: 8px;
+  margin-bottom: 12px;
+}
+.name-modal-actions {
+  display: flex;
+  gap: 8px;
+}
 .cmt-body {
   font-size: 13.5px;
   margin: 6px 0;

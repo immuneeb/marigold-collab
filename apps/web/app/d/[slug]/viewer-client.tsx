@@ -386,7 +386,9 @@ export function ViewerClient(props: {
       setHelpOpen((v) => !v);
       return true;
     }
-    // ⌘/Ctrl+⌥+M is Google Docs' insert-comment chord; C is Figma's.
+    // ⌘/Ctrl+⌥+M is Google Docs' insert-comment chord. Plain C is deliberately
+    // unbound: selecting text and typing a replacement word that starts with C
+    // must not open a comment draft instead.
     if (mod && k.altKey && k.code === "KeyM") {
       if (!canComment) return false;
       if (sel) startDraftFromSelection();
@@ -396,13 +398,8 @@ export function ViewerClient(props: {
     if (mod || k.altKey) return false;
     switch (k.key.toLowerCase()) {
       case "c":
-        if (k.shiftKey) {
-          setOpen((o) => o !== true);
-          return true;
-        }
-        if (!canComment) return false;
-        if (sel) startDraftFromSelection();
-        else toggleComment();
+        if (!k.shiftKey) return false;
+        setOpen((o) => o !== true);
         return true;
       case "n":
         navComment(k.shiftKey ? -1 : 1);
@@ -578,7 +575,7 @@ export function ViewerClient(props: {
             <button
               className={commenting ? "btn-secondary btn-inline" : "btn-ghost"}
               onClick={toggleComment}
-              title="Add a comment — C"
+              title="Add a comment — ⌘⌥M"
             >
               {commenting ? "Click an element…" : "+ Comment"}
             </button>
@@ -822,8 +819,10 @@ export function ViewerClient(props: {
 // Keep in sync with the dispatcher above and the local viewer's copy
 // (packages/local/src/shell.ts) — same bindings, one muscle memory.
 const SHORTCUTS: [string, string][] = [
-  ["C", "New comment — uses your selection, or click an element to place it"],
-  ["⌘⌥M", "New comment (Google Docs chord; Ctrl+Alt+M on Windows)"],
+  [
+    "⌘⌥M",
+    "New comment — uses your selection, or click an element to place it (Ctrl+Alt+M on Windows)",
+  ],
   ["⇧C", "Show or hide the comments panel"],
   ["N / ⇧N", "Next / previous comment"],
   ["R", "Reply to the selected comment"],
