@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import {
@@ -17,6 +18,25 @@ type Params = {
   params: Promise<{ slug: string }>;
   searchParams: Promise<{ k?: string }>;
 };
+
+// Tab title = the doc's title, but only for viewers who could open it — a
+// private doc's title must not leak to whoever guesses the URL.
+export async function generateMetadata({
+  params,
+  searchParams,
+}: Params): Promise<Metadata> {
+  const { slug } = await params;
+  const { k } = await searchParams;
+  const resolved = await getDocBySlug(slug);
+  if (!resolved) return {};
+  const { doc } = resolved;
+  const actor = await currentActor();
+  const { ok } = await authorize(doc.id, actor, "view");
+  const kOne = Array.isArray(k) ? k[0] : k;
+  const quick = quickAccess(doc, kOne?.trim() || null) === "granted";
+  if (!ok && !quick) return {};
+  return { title: doc.title || "Untitled" };
+}
 
 function Notice({
   title,

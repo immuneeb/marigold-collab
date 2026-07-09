@@ -12,7 +12,8 @@ export function shellHtml(docId: string, title: string): string {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${t} · Marigold Local</title>
+<title>${t}</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E🌼%3C/text%3E%3C/svg%3E">
 <style>
   :root {
     --bg: #fffdf7; --fg: #1c1917; --muted: #78716c; --line: #e7e2d6;
@@ -82,6 +83,16 @@ export function shellHtml(docId: string, title: string): string {
   .agent-line.busy { color: var(--marigold-dark); font-weight: 600; }
   .spin { display: inline-block; width: 11px; height: 11px; border: 2px solid var(--accent-soft); border-top-color: var(--marigold); border-radius: 50%; animation: mgspin .8s linear infinite; vertical-align: -1px; margin-right: 7px; }
   @keyframes mgspin { to { transform: rotate(360deg); } }
+
+  .kbd-overlay { position: fixed; inset: 0; z-index: 60; background: rgba(28,25,23,.35); display: flex; align-items: center; justify-content: center; padding: 20px; }
+  .kbd-card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 12px 40px rgba(28,25,23,.25); padding: 16px 18px; width: 100%; max-width: 460px; max-height: 80dvh; overflow-y: auto; }
+  .kbd-title { display: flex; align-items: center; justify-content: space-between; font-weight: 650; padding-bottom: 8px; margin-bottom: 6px; border-bottom: 1px solid var(--line); }
+  .kbd-close { border: 0; background: transparent; color: var(--muted); cursor: pointer; padding: 2px 7px; border-radius: 6px; }
+  .kbd-close:hover { background: var(--accent-soft); color: var(--fg); }
+  .kbd-row { display: flex; align-items: baseline; gap: 14px; padding: 6px 0; }
+  .kbd-keys { flex: none; width: 96px; white-space: nowrap; }
+  .kbd-what { font-size: 13.5px; color: var(--muted); }
+  kbd { display: inline-block; font: 600 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--marigold-dark); background: var(--accent-soft); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 6px; padding: 4px 6px; }
 </style>
 </head>
 <body>
@@ -94,8 +105,8 @@ export function shellHtml(docId: string, title: string): string {
     </div>
     <div class="viewer-right">
       <span class="muted small savestate" id="savestate"></span>
-      <button class="btn-ghost" id="commentBtn">+ Comment</button>
-      <button class="btn-ghost" id="sidebarBtn">Comments</button>
+      <button class="btn-ghost" id="commentBtn" title="Add a comment — ⌘⌥M">+ Comment</button>
+      <button class="btn-ghost" id="sidebarBtn" title="Show or hide comments — ⇧C">Comments</button>
     </div>
   </header>
   <div class="connbar" id="connbar"></div>
@@ -114,7 +125,7 @@ export function shellHtml(docId: string, title: string): string {
       <div class="submit-panel">
         <p class="agent-line" id="agentLine"></p>
         <textarea id="overall" rows="2" placeholder="Overall feedback (optional)…"></textarea>
-        <button class="btn" id="submitBtn">Send feedback to agent</button>
+        <button class="btn" id="submitBtn" title="Send feedback — ⌘↵">Send feedback to agent</button>
         <p class="muted small hint" id="submitHint">Sends all open comments back to the agent for the next revision. The page live-reloads when the agent saves.</p>
       </div>
     </aside>
@@ -203,6 +214,7 @@ export function shellHtml(docId: string, title: string): string {
   }
   function threadCard(c) {
     var card = el("div", "cmt-thread" + (selected === c.id ? " sel" : "") + (c.status === "resolved" ? " resolved" : ""));
+    card.setAttribute("data-thread", c.id);
     card.addEventListener("click", function () {
       selected = c.id;
       if (c.anchor && c.anchor.marigoldId) post({ type: "scrollTo", id: c.anchor.marigoldId });
@@ -220,6 +232,7 @@ export function shellHtml(docId: string, title: string): string {
     var row = el("div", "cmt-reply");
     var input = el("input");
     input.placeholder = "Reply…";
+    input.setAttribute("data-reply-for", c.id);
     input.addEventListener("click", function (e) { e.stopPropagation(); });
     input.addEventListener("keydown", function (e) {
       if (e.key === "Enter" && input.value.trim()) {
@@ -228,10 +241,14 @@ export function shellHtml(docId: string, title: string): string {
           body: JSON.stringify({ body: input.value.trim() })
         }).then(refresh).catch(fail("Reply failed"));
         input.value = "";
+      } else if (e.key === "Escape") {
+        e.stopPropagation();
+        input.blur();
       }
     });
     row.appendChild(input);
     var res = el("button", "btn-ghost", c.status === "resolved" ? "Reopen" : "Resolve");
+    res.title = (c.status === "resolved" ? "Reopen" : "Resolve") + " — E when selected";
     res.addEventListener("click", function (e) {
       e.stopPropagation();
       api("/comments/" + c.id, {
@@ -251,7 +268,7 @@ export function shellHtml(docId: string, title: string): string {
     threadsEl.textContent = "";
     if (!open.length && !resolved.length && !draft) {
       threadsEl.appendChild(el("p", "muted small cmt-empty",
-        "Select text and hit the \\uD83D\\uDCAC+ button to comment. Click text to edit it \\u2014 changes save to the file automatically."));
+        "Select text and hit the \\uD83D\\uDCAC+ button to comment. Click text to edit it \\u2014 changes save to the file automatically. Press ? for keyboard shortcuts."));
     }
     open.forEach(function (c) { threadsEl.appendChild(threadCard(c)); });
 
@@ -304,18 +321,32 @@ export function shellHtml(docId: string, title: string): string {
     var ta = el("textarea");
     ta.rows = 3;
     ta.placeholder = "Add a comment…";
-    card.appendChild(ta);
-    var actions = el("div", "cmt-actions");
-    var ok = el("button", "btn-secondary", "Comment");
-    ok.addEventListener("click", function () {
+    function submitDraft() {
       if (!ta.value.trim()) return;
       // Draft (and its text) survives a failed submit — nothing is lost.
       api("/comments", {
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ anchor: draft.anchor, body: ta.value.trim() })
       }).then(function () { draft = null; refresh(); }).catch(fail("Comment failed"));
+    }
+    ta.addEventListener("keydown", function (e) {
+      if (e.key === "Enter" && (e.shiftKey || e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        submitDraft();
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        draft = null;
+        render();
+      }
     });
+    card.appendChild(ta);
+    var actions = el("div", "cmt-actions");
+    var ok = el("button", "btn-secondary", "Comment");
+    ok.title = "Post \\u2014 \\u21E7\\u21B5";
+    ok.addEventListener("click", submitDraft);
     var no = el("button", "btn-ghost", "Cancel");
+    no.title = "Esc";
     no.addEventListener("click", function () { draft = null; render(); });
     actions.appendChild(ok);
     actions.appendChild(no);
@@ -360,6 +391,7 @@ export function shellHtml(docId: string, title: string): string {
     else if (d.type === "rects") { rects = d.rects || {}; renderPins(); }
     else if (d.type === "placed") { commenting = false; setCommentBtn(); draft = { anchor: d.anchor }; render(); }
     else if (d.type === "selection") { sel = d.sel || null; renderPins(); }
+    else if (d.type === "key") { handleShortcut(d); } // shortcut pressed with focus inside the doc iframe
     else if (d.type === "edited" && d.id) { queue.set(String(d.id), String(d.html || "")); flushEdits(); }
   });
   frame.addEventListener("load", syncAgent);
@@ -370,15 +402,156 @@ export function shellHtml(docId: string, title: string): string {
     commentBtn.textContent = commenting ? "Click an element…" : "+ Comment";
     commentBtn.className = commenting ? "btn-secondary" : "btn-ghost";
   }
-  commentBtn.addEventListener("click", function () {
+  function toggleCommentMode() {
     commenting = !commenting;
     draft = null;
     setCommentBtn();
     post({ type: "commentMode", on: commenting });
     render();
-  });
-  document.getElementById("sidebarBtn").addEventListener("click", function () {
+  }
+  function toggleSidebar() {
     sidebar.style.display = sidebar.style.display === "none" ? "flex" : "none";
+  }
+  commentBtn.addEventListener("click", toggleCommentMode);
+  document.getElementById("sidebarBtn").addEventListener("click", toggleSidebar);
+
+  // ── keyboard shortcuts (Docs/Figma-familiar) ──
+  // Same bindings as the cloud viewer (apps/web viewer-client.tsx) — one
+  // muscle memory across local and hosted. The dispatcher consumes window
+  // keydowns AND keys the anchor agent forwards from inside the doc iframe.
+  function commentAction() {
+    if (sel) {
+      draft = { anchor: sel.anchor };
+      sel = null;
+      post({ type: "clearSelection" });
+      render();
+    } else {
+      toggleCommentMode();
+    }
+  }
+  function openRootsList() {
+    return roots().filter(function (c) { return c.status !== "resolved"; });
+  }
+  function selectThread(c) {
+    selected = c.id;
+    sidebar.style.display = "flex";
+    if (c.anchor && c.anchor.marigoldId) post({ type: "scrollTo", id: c.anchor.marigoldId });
+    render();
+    var card = threadsEl.querySelector('[data-thread="' + c.id + '"]');
+    if (card) card.scrollIntoView({ block: "nearest" });
+  }
+  function navComment(dir) {
+    var list = openRootsList();
+    if (!list.length) return;
+    var idx = -1;
+    for (var i = 0; i < list.length; i++) if (list[i].id === selected) idx = i;
+    var next = idx === -1
+      ? list[dir === 1 ? 0 : list.length - 1]
+      : list[(idx + dir + list.length) % list.length];
+    selectThread(next);
+  }
+  function focusReply() {
+    var list = openRootsList();
+    var c = null;
+    for (var i = 0; i < list.length; i++) if (list[i].id === selected) c = list[i];
+    if (!c) c = list[0];
+    if (!c) return;
+    selectThread(c);
+    var input = threadsEl.querySelector('[data-reply-for="' + c.id + '"]');
+    if (input) input.focus();
+  }
+  function resolveSelected() {
+    if (!selected) return;
+    var c = null;
+    roots().forEach(function (x) { if (x.id === selected) c = x; });
+    if (!c) return;
+    api("/comments/" + c.id, {
+      method: "PATCH", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ status: c.status === "resolved" ? "open" : "resolved" })
+    }).then(refresh).catch(fail("Update failed"));
+  }
+
+  var helpOpen = false;
+  var helpEl = null;
+  var SHORTCUTS = [
+    ["\\u2318\\u2325M", "New comment \\u2014 uses your selection, or click an element to place it (Ctrl+Alt+M on Windows)"],
+    ["\\u21E7C", "Show or hide the comments panel"],
+    ["N / \\u21E7N", "Next / previous comment"],
+    ["R", "Reply to the selected comment"],
+    ["E", "Resolve or reopen the selected comment"],
+    ["\\u21E7\\u21B5", "Post, while writing a comment"],
+    ["\\u2318\\u21B5", "Send feedback to the agent, from the feedback box"],
+    ["Esc", "Cancel comment mode, discard a draft, or close this"],
+    ["?", "Keyboard shortcuts"]
+  ];
+  function toggleHelp(force) {
+    helpOpen = force != null ? !!force : !helpOpen;
+    if (!helpOpen) {
+      if (helpEl) { helpEl.remove(); helpEl = null; }
+      return;
+    }
+    if (helpEl) return;
+    helpEl = el("div", "kbd-overlay");
+    helpEl.addEventListener("click", function () { toggleHelp(false); });
+    var card = el("div", "kbd-card");
+    card.addEventListener("click", function (e) { e.stopPropagation(); });
+    var title = el("div", "kbd-title");
+    title.appendChild(el("span", "", "Keyboard shortcuts"));
+    var x = el("button", "kbd-close", "\\u2715");
+    x.addEventListener("click", function () { toggleHelp(false); });
+    title.appendChild(x);
+    card.appendChild(title);
+    SHORTCUTS.forEach(function (row) {
+      var r = el("div", "kbd-row");
+      var keys = el("span", "kbd-keys");
+      row[0].split(" / ").forEach(function (k, i) {
+        if (i) keys.appendChild(document.createTextNode(" / "));
+        keys.appendChild(el("kbd", "", k));
+      });
+      r.appendChild(keys);
+      r.appendChild(el("span", "kbd-what", row[1]));
+      card.appendChild(r);
+    });
+    helpEl.appendChild(card);
+    document.body.appendChild(helpEl);
+  }
+
+  function handleShortcut(k) {
+    var mod = !!k.metaKey || !!k.ctrlKey;
+    if (k.key === "Escape") {
+      // Most-transient thing first, one layer per press.
+      if (helpOpen) toggleHelp(false);
+      else if (commenting) toggleCommentMode();
+      else if (draft) { draft = null; render(); }
+      else if (sel) { sel = null; post({ type: "clearSelection" }); renderPins(); }
+      else if (selected) { selected = null; render(); }
+      else return false;
+      return true;
+    }
+    if (k.key === "?" && !mod && !k.altKey) { toggleHelp(); return true; }
+    // \\u2318/Ctrl+\\u2325+M is Google Docs' insert-comment chord. Plain C is
+    // deliberately unbound: selecting text and typing a replacement word that
+    // starts with C must not open a comment draft instead.
+    if (mod && k.altKey && k.code === "KeyM") { commentAction(); return true; }
+    if (mod || k.altKey) return false;
+    var kk = String(k.key || "").toLowerCase();
+    if (kk === "c") {
+      if (!k.shiftKey) return false;
+      toggleSidebar();
+      return true;
+    }
+    if (kk === "n") { navComment(k.shiftKey ? -1 : 1); return true; }
+    if (kk === "r" && !k.shiftKey) { focusReply(); return true; }
+    if (kk === "e" && !k.shiftKey) { resolveSelected(); return true; }
+    return false;
+  }
+  function typingTarget(t) {
+    return !!(t && t.nodeType === 1 && (t.isContentEditable ||
+      t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT"));
+  }
+  window.addEventListener("keydown", function (e) {
+    if (typingTarget(e.target)) return; // composers handle their own keys
+    if (handleShortcut(e)) e.preventDefault();
   });
 
   // ── agent presence + submit lifecycle ──
@@ -423,6 +596,12 @@ export function shellHtml(docId: string, title: string): string {
 
   var submitBtn = document.getElementById("submitBtn");
   var overall = document.getElementById("overall");
+  overall.addEventListener("keydown", function (e) {
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && !submitBtn.disabled) {
+      e.preventDefault();
+      submitBtn.click();
+    }
+  });
   submitBtn.addEventListener("click", function () {
     // First submit is the natural moment to ask for notification permission.
     try {
@@ -510,7 +689,9 @@ export function indexHtml(docs: { docId: string; title: string; path: string }[]
         .join("")
     : `<li><p class="muted" style="padding:14px 16px">No drafts open. Run <code>marigold-local open &lt;file.html&gt;</code></p></li>`;
   return `<!doctype html>
-<html><head><meta charset="utf-8"><title>Marigold Local</title><style>
+<html><head><meta charset="utf-8"><title>Marigold Local</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E🌼%3C/text%3E%3C/svg%3E">
+<style>
   :root { --bg:#fffdf7; --fg:#1c1917; --muted:#78716c; --line:#e7e2d6; --card:#fff; --accent-soft:#fdf3e3; --marigold-dark:#b8690a; }
   body { background:var(--bg); color:var(--fg); font:15px/1.55 ui-sans-serif,system-ui,sans-serif; margin:0; }
   .container { max-width:720px; margin:0 auto; padding:40px 20px; }

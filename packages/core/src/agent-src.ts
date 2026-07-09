@@ -232,8 +232,29 @@ export const ANCHOR_AGENT_JS = String.raw`(function () {
     }
     return false;
   }
+  // Keyboard: Escape cancels an in-place edit here; everything else the user
+  // types while focus sits in this frame is invisible to the parent, so
+  // whitelisted shortcut keys are forwarded up for the viewer shell to act on
+  // (C = comment, N = next, ? = help, ...). Never forwarded mid-edit or from
+  // the doc's own form fields.
   document.addEventListener("keydown", function (e) {
-    if (e.key === "Escape" && editingEl) { e.preventDefault(); endEdit(false); }
+    if (editingEl) {
+      if (e.key === "Escape") { e.preventDefault(); endEdit(false); }
+      return;
+    }
+    var t = e.target;
+    if (t && t.nodeType === 1 && (t.isContentEditable ||
+        t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT")) return;
+    var mod = e.metaKey || e.ctrlKey;
+    var fwd = mod && e.altKey && e.code === "KeyM"; // Docs' insert-comment chord
+    if (!fwd && !mod && !e.altKey) {
+      var k = e.key.toLowerCase();
+      fwd = k === "c" || k === "n" || k === "e" || k === "r" || e.key === "?" || e.key === "Escape";
+    }
+    if (fwd) send({
+      type: "key", key: e.key, code: e.code,
+      shiftKey: e.shiftKey, metaKey: e.metaKey, ctrlKey: e.ctrlKey, altKey: e.altKey
+    });
   });
 
   // ── hover controls: move / duplicate / delete / add ──

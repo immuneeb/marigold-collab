@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 export function EditClient(props: {
   docId: string;
@@ -17,6 +17,22 @@ export function EditClient(props: {
   const [error, setError] = useState<string | null>(null);
 
   const dirty = html !== props.initialHtml;
+
+  // ⌘/Ctrl+S saves (instead of the browser's save-page dialog).
+  const saveRef = useRef<() => void>(() => {});
+  saveRef.current = () => {
+    if (dirty && !busy) void save();
+  };
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") {
+        e.preventDefault();
+        saveRef.current();
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
 
   async function save() {
     setBusy(true);
@@ -60,6 +76,7 @@ export function EditClient(props: {
             className="btn btn-inline"
             disabled={busy || !dirty}
             onClick={save}
+            title="Save — ⌘S"
           >
             {busy ? "Saving…" : "Save"}
           </button>
