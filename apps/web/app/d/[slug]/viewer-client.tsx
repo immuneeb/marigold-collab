@@ -88,6 +88,12 @@ export function ViewerClient(props: {
   // of silently swallowing it — a lost comment is the opposite of feedback.
   const [commentError, setCommentError] = useState<string | null>(null);
   const [guestName, setGuestName] = useState("");
+  // Guest display name is asked ONCE, in a modal, the first time they comment —
+  // then persisted (localStorage) so it's never asked again, this session or the
+  // next. `namePrompt.after` runs the pending comment/reply once a name is set.
+  const [namePrompt, setNamePrompt] = useState<null | {
+    after: (name: string) => void;
+  }>(null);
   useEffect(() => {
     if (!props.quick) return;
     try {
@@ -450,7 +456,8 @@ export function ViewerClient(props: {
     if (!draft || !body.trim()) return false;
     const author = (name ?? guestName).trim();
     if (guest && !author) {
-      setCommentError("Enter your name to comment.");
+      // First comment on this doc and no saved name — ask once, then post.
+      setNamePrompt({ after: (n) => void submitDraft(body, n) });
       return false;
     }
     if (guest) rememberGuestName(author);
@@ -484,7 +491,7 @@ export function ViewerClient(props: {
     if (!body.trim()) return false;
     const author = (name ?? guestName).trim();
     if (guest && !author) {
-      setCommentError("Enter your name to reply.");
+      setNamePrompt({ after: (n) => void sendReply(parentId, body, n) });
       return false;
     }
     if (guest) rememberGuestName(author);
@@ -735,13 +742,38 @@ export function ViewerClient(props: {
               </div>
             )}
 
+            {guest && guestName && (
+              <div className="cmt-asname">
+                Commenting as <strong>{guestName}</strong>
+                <button
+                  className="cmt-asname-change"
+                  onClick={() =>
+                    setNamePrompt({ after: () => setNamePrompt(null) })
+                  }
+                >
+                  change
+                </button>
+              </div>
+            )}
+
             {draft && (
               <DraftBox
                 preview={draft.anchor?.textQuote?.exact ?? ""}
-                guest={guest}
-                defaultName={guestName}
                 onCancel={() => setDraft(null)}
                 onSubmit={submitDraft}
+              />
+            )}
+
+            {namePrompt && (
+              <NamePrompt
+                initial={guestName}
+                onSubmit={(n) => {
+                  rememberGuestName(n);
+                  const run = namePrompt.after;
+                  setNamePrompt(null);
+                  run(n);
+                }}
+                onCancel={() => setNamePrompt(null)}
               />
             )}
 
@@ -767,9 +799,7 @@ export function ViewerClient(props: {
                 canComment={canComment}
                 canModerate={canModerate}
                 canEdit={props.canEdit}
-                guest={guest}
-                guestName={guestName}
-                onReply={(b, n) => sendReply(c.id, b, n)}
+                onReply={(b) => sendReply(c.id, b)}
                 onResolve={() => setStatus(c.id, "resolved")}
                 onAssignAi={() => setAssignAi(c.id, !c.assignedToAi)}
               />
@@ -798,9 +828,7 @@ export function ViewerClient(props: {
                       canComment={canComment}
                       canModerate={canModerate}
                       canEdit={props.canEdit}
-                      guest={guest}
-                      guestName={guestName}
-                      onReply={(b, n) => sendReply(c.id, b, n)}
+                      onReply={(b) => sendReply(c.id, b)}
                       onResolve={() => setStatus(c.id, "open")}
                       onAssignAi={() => setAssignAi(c.id, !c.assignedToAi)}
                     />
@@ -1005,30 +1033,16 @@ function ClaimBanner({
 
 function DraftBox(props: {
   preview: string;
-  // Guest (quick-doc) commenter: prompt for a display name, prefilled from the
-  // last-used one. Account commenters never see the name field.
-  guest?: boolean;
-  defaultName?: string;
   onCancel: () => void;
-  onSubmit: (body: string, name?: string) => Promise<boolean>;
+  // Posts the comment. A guest with no saved name is asked once via a modal
+  // (handled by the parent), so there's no inline name field here.
+  onSubmit: (body: string) => Promise<boolean>;
 }) {
   const [v, setV] = useState("");
-  const [name, setName] = useState(props.defaultName ?? "");
-  const nameMissing = !!props.guest && !name.trim();
   return (
     <div className="cmt-thread draft">
       {props.preview && (
         <div className="cmt-anchor">“{props.preview.slice(0, 80)}”</div>
-      )}
-      {props.guest && (
-        <input
-          className="cmt-guestname"
-          placeholder="Your name"
-          aria-label="Your name"
-          maxLength={40}
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-        />
       )}
       <textarea
         autoFocus
@@ -1039,7 +1053,7 @@ function DraftBox(props: {
         onKeyDown={(e) => {
           if (e.key === "Enter" && (e.shiftKey || e.metaKey || e.ctrlKey)) {
             e.preventDefault();
-            if (!nameMissing && v.trim()) props.onSubmit(v, name);
+            if (v.trim()) props.onSubmit(v);
           } else if (e.key === "Escape") {
             e.preventDefault();
             e.stopPropagation();
@@ -1050,8 +1064,8 @@ function DraftBox(props: {
       <div className="cmt-actions">
         <button
           className="btn-secondary btn-inline"
-          disabled={nameMissing || !v.trim()}
-          onClick={() => props.onSubmit(v, name)}
+          disabled={!v.trim()}
+          onClick={() => props.onSubmit(v)}
           title="Post — ⇧↵"
         >
           Comment
@@ -1059,6 +1073,71 @@ function DraftBox(props: {
         <button className="btn-ghost" onClick={props.onCancel} title="Esc">
           Cancel
         </button>
+      </div>
+    </div>
+  );
+}
+
+// Asked ONCE, the first time a guest comments (or via "change"). Persisted by
+// the caller, so it never reappears on later comments or after a reload.
+function NamePrompt(props: {
+  initial: string;
+  onSubmit: (name: string) => void;
+  onCancel: () => void;
+}) {
+  const [v, setV] = useState(props.initial);
+  const submit = () => {
+    const n = v.trim();
+    if (n) props.onSubmit(n);
+  };
+  return (
+    <div
+      className="name-modal-backdrop"
+      onClick={props.onCancel}
+      role="presentation"
+    >
+      <div
+        className="name-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Choose a display name"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="name-modal-title">Add your name to comment</div>
+        <div className="name-modal-sub">
+          Shown on your comments. We&rsquo;ll remember it — you won&rsquo;t be
+          asked again.
+        </div>
+        <input
+          className="name-modal-input"
+          autoFocus
+          placeholder="Your name"
+          aria-label="Your name"
+          maxLength={40}
+          value={v}
+          onChange={(e) => setV(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              submit();
+            } else if (e.key === "Escape") {
+              e.preventDefault();
+              props.onCancel();
+            }
+          }}
+        />
+        <div className="name-modal-actions">
+          <button
+            className="btn-secondary btn-inline"
+            disabled={!v.trim()}
+            onClick={submit}
+          >
+            Continue
+          </button>
+          <button className="btn-ghost" onClick={props.onCancel}>
+            Cancel
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -1072,22 +1151,16 @@ function Thread(props: {
   // Account-only moderation (resolve / assign-to-AI). False for guests.
   canModerate: boolean;
   canEdit: boolean;
-  guest?: boolean;
-  guestName?: string;
   onSelect: () => void;
-  onReply: (body: string, name?: string) => Promise<boolean>;
+  // A guest with no saved name is asked once via the modal (parent-handled);
+  // no inline name field here.
+  onReply: (body: string) => Promise<boolean>;
   onResolve: () => void;
   onAssignAi: () => void;
 }) {
   const [reply, setReply] = useState("");
-  const [name, setName] = useState(props.guestName ?? "");
-  useEffect(() => {
-    if (props.guestName) setName(props.guestName);
-  }, [props.guestName]);
   const { root } = props;
   const orphaned = root.status === "orphaned";
-  // Guests name themselves once; after that the saved name is reused silently.
-  const needName = !!props.guest && !(props.guestName ?? "").trim();
   return (
     <div
       className={`cmt-thread${props.selected ? " sel" : ""}${root.status === "resolved" ? " resolved" : ""}`}
@@ -1111,17 +1184,6 @@ function Thread(props: {
       ))}
       {props.canComment && (
         <div className="cmt-reply">
-          {needName && (
-            <input
-              className="cmt-guestname"
-              placeholder="Your name"
-              aria-label="Your name"
-              maxLength={40}
-              value={name}
-              onClick={(e) => e.stopPropagation()}
-              onChange={(e) => setName(e.target.value)}
-            />
-          )}
           <input
             placeholder="Reply…"
             data-reply-for={root.id}
@@ -1130,11 +1192,11 @@ function Thread(props: {
             onKeyDown={async (e) => {
               if (e.key === "Enter") {
                 e.preventDefault();
-                // Don't submit — or clear the text — if a guest hasn't named
-                // themselves; the reply would be dropped silently otherwise.
-                if ((needName && !name.trim()) || !reply.trim()) return;
-                const ok = await props.onReply(reply, name);
-                if (ok) setReply(""); // keep the text if the post failed
+                if (!reply.trim()) return;
+                // A guest with no name is asked once (modal); on failure the
+                // text is kept so nothing is lost.
+                const ok = await props.onReply(reply);
+                if (ok) setReply("");
               } else if (e.key === "Escape") {
                 e.stopPropagation();
                 e.currentTarget.blur();
