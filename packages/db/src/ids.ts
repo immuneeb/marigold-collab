@@ -2,7 +2,7 @@ import { ulid } from "ulid";
 
 /** Prefixed ULID, e.g. "doc_01J..." — sortable, unique, readable. */
 export function newId(
-  prefix: "usr" | "doc" | "ver" | "shr" | "cmt" | "evt",
+  prefix: "usr" | "doc" | "ver" | "shr" | "cmt" | "evt" | "akey",
 ): string {
   return `${prefix}_${ulid()}`;
 }
