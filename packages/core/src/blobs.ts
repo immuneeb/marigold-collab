@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { dirname, isAbsolute, join, resolve } from "node:path";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { blobs as blobsTable, db, docVersions } from "@marigold/db";
 import type { BlobStore, Manifest } from "./types";
 
@@ -223,8 +223,21 @@ export function pgBlobStore(): BlobStore {
     },
     async deleteBlob(sha) {
       // Bytes live in the blobs row; deleteDoc removes rows in its txn, so this
-      // only matters when called outside that path. Idempotent either way.
-      await db.delete(blobsTable).where(eq(blobsTable.sha256, sha));
+      // post-commit call only matters when called outside that path. It is
+      // REFERENCE-GUARDED (F0): a single atomic DELETE that removes the row only
+      // when no surviving version still references the sha. That closes the GC
+      // vs. writer post-commit race for the pg driver — if a concurrent writer
+      // restored a reference (its version row committed) after the GC's in-txn
+      // orphan decision, the NOT EXISTS keeps the blob and its re-put bytes.
+      // Idempotent.
+      await db.execute(sql`
+        delete from ${blobsTable}
+        where ${blobsTable.sha256} = ${sha}
+          and not exists (
+            select 1 from ${docVersions}, jsonb_each_text(${docVersions.manifest}) as e
+            where e.value = ${sha}
+          )
+      `);
     },
     async deleteManifest() {
       // Manifest lives in doc_versions.manifest — gone with the version row.

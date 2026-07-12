@@ -2,7 +2,11 @@ import NextAuth from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import Google from "next-auth/providers/google";
 import { consumeMagicLinkToken } from "@/lib/magic-link";
-import { upsertUserOnSignIn } from "@/lib/users";
+import {
+  bindVerifiedEmailShares,
+  findVerifiedEmailOwnerId,
+  upsertUserOnSignIn,
+} from "@/lib/users";
 
 const isProd = process.env.NODE_ENV === "production";
 // Dev login is ON by default in non-prod; set DEV_AUTH=0 to disable.
@@ -84,12 +88,24 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           name: (p.name as string) ?? null,
         };
       } else if (account.provider === "magic-link" && user?.email) {
+        // A magic link proves control of this mailbox — the same signal Google's
+        // email_verified gives us. If the address is ALREADY held verified by an
+        // existing account (Google/dev), sign in AS that account instead of
+        // minting a second `email|<addr>` user: a duplicate would collide with
+        // the verified-email unique index, degrade the address to unverified, and
+        // break share binding. Only fall back to the email identity when nobody
+        // holds it verified.
+        const existingId = await findVerifiedEmailOwnerId(user.email);
+        if (existingId) {
+          await bindVerifiedEmailShares(existingId, user.email);
+          token.uid = existingId;
+          token.email = user.email;
+          return token;
+        }
         info = {
           authSub: `email|${user.email}`,
           email: user.email,
-          // Clicking a single-use link emailed to the address proves mailbox
-          // control — the same signal Google's email_verified gives us. This
-          // is what flips pending shares to active in upsertUserOnSignIn.
+          // This is what flips pending shares to active in upsertUserOnSignIn.
           emailVerified: true,
           name: user.name ?? null,
         };

@@ -1,5 +1,6 @@
 import { and, eq, isNull } from "drizzle-orm";
 import {
+  AgentKeyRevokedError,
   applyInlineEdits,
   DocClaimedError,
   getBlobStore,
@@ -72,6 +73,9 @@ export async function POST(req: Request, { params }: Params) {
       html: newHtml,
       assistant: "inline-edit",
       requireUnclaimed: quick, // key writes fail if the doc was claimed mid-flight
+      // Agent-key writes: re-check the key is still live under the write lock —
+      // revocation between the recheck above and commit → 403 key_revoked.
+      requireAgentKeyLive: access.mode === "agent" ? access.keyId : undefined,
     });
     // Rolling expiry: a successful unclaimed write buys another 30 days.
     // ownerId IS NULL guard: never re-stamp expiry onto a just-claimed doc.
@@ -106,6 +110,8 @@ export async function POST(req: Request, { params }: Params) {
   } catch (e) {
     if (e instanceof DocClaimedError)
       return json(403, { error: "claimed", hint: "The doc was claimed; the quick key no longer grants access." });
+    if (e instanceof AgentKeyRevokedError)
+      return json(403, { error: "key_revoked", hint: "This agent key no longer grants update access to this doc." });
     if (e instanceof IngestError) return json(400, { error: e.message });
     return json(400, { error: (e as Error).message });
   }

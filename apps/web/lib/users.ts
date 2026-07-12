@@ -10,6 +10,38 @@ export interface SignInInfo {
 }
 
 /**
+ * The user id (if any) that already holds this address as a VERIFIED email.
+ * Magic-link sign-in uses this to sign in AS the existing owner rather than
+ * minting a duplicate `email|<addr>` account (which would collide with the
+ * verified-email unique index and degrade the address to unverified). Null when
+ * no verified holder exists — the caller then falls back to the email identity.
+ */
+export async function findVerifiedEmailOwnerId(
+  email: string,
+): Promise<string | null> {
+  const normalized = normalizeEmail(email);
+  const [row] = await db
+    .select({ userId: userEmails.userId })
+    .from(userEmails)
+    .where(and(eq(userEmails.email, normalized), eq(userEmails.verified, true)))
+    .limit(1);
+  return row?.userId ?? null;
+}
+
+/** Flip this user's pending shares for a now-verified address to active. Shared
+ * by upsertUserOnSignIn and the magic-link "sign in as existing owner" path. */
+export async function bindVerifiedEmailShares(
+  userId: string,
+  email: string,
+): Promise<void> {
+  const normalized = normalizeEmail(email);
+  await db
+    .update(shares)
+    .set({ state: "active", boundUserId: userId })
+    .where(and(eq(shares.email, normalized), eq(shares.state, "pending")));
+}
+
+/**
  * Idempotent on every sign-in: upsert the user by auth subject, then record the
  * normalized email and its verified state. The verified-email partial unique
  * index can reject a cross-user claim of an already-verified address; we degrade
@@ -57,10 +89,7 @@ export async function upsertUserOnSignIn(
 
   // Bind pending shares for this newly-verified email -> active.
   if (info.emailVerified) {
-    await db
-      .update(shares)
-      .set({ state: "active", boundUserId: userId })
-      .where(and(eq(shares.email, normalized), eq(shares.state, "pending")));
+    await bindVerifiedEmailShares(userId, normalized);
   }
 
   return { id: userId };

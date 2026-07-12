@@ -1,5 +1,6 @@
 import { and, eq, isNull } from "drizzle-orm";
 import {
+  AgentKeyRevokedError,
   authorize,
   deinstrumentHtml,
   DocClaimedError,
@@ -224,6 +225,9 @@ export async function PUT(req: Request, { params }: Params) {
       // Quick-key writes must fail if the doc was claimed mid-flight; agent
       // keys only exist on owned docs, so the guard would always trip there.
       requireUnclaimed: !agent,
+      // Agent-key writes: re-check the key is still live under the write lock —
+      // revocation between the TOCTOU recheck above and commit → 403 key_revoked.
+      requireAgentKeyLive: agent ? agent.keyId : undefined,
     });
     if (agent) {
       // Owned docs never expire — no expiry stamp on the agent-key path.
@@ -270,6 +274,11 @@ export async function PUT(req: Request, { params }: Params) {
   } catch (e) {
     if (e instanceof DocClaimedError)
       return json(403, { error: "claimed", hint: HINTS.claimed });
+    if (e instanceof AgentKeyRevokedError)
+      return json(403, {
+        error: "key_revoked",
+        hint: "This agent key no longer grants update access to this doc.",
+      });
     if (e instanceof IngestError)
       return json(ingestStatus(e.code), {
         error: e.code,

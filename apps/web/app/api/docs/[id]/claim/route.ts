@@ -59,11 +59,24 @@ export async function POST(req: Request, { params }: Params) {
     })
     .where(and(eq(docs.id, id), isNull(docs.ownerId)))
     .returning({ id: docs.id });
-  if (updated.length === 0)
+  if (updated.length === 0) {
+    // Zero rows can mean two different things — distinguish them so we don't tell
+    // a lie. Re-read: if the row is gone, the daily purge removed it between our
+    // initial read and this update (grace elapsed), so it can never be claimed
+    // again; if it still exists, someone else won the claim race first.
+    const still = (
+      await db.select({ id: docs.id }).from(docs).where(eq(docs.id, id)).limit(1)
+    )[0];
+    if (!still)
+      return json(410, {
+        error: "purged",
+        hint: "This doc expired and was permanently removed; it can no longer be claimed.",
+      });
     return json(409, {
       error: "claim_conflict",
       hint: "Someone else claimed this doc first.",
     });
+  }
 
   return json(200, {
     ok: true,

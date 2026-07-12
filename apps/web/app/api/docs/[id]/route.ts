@@ -1,7 +1,9 @@
 import { and, eq, isNull } from "drizzle-orm";
 import {
+  AgentKeyRevokedError,
   authorize,
   deleteDoc,
+  deleteDocDeep,
   DocClaimedError,
   IngestError,
   quickDocExpiry,
@@ -109,6 +111,9 @@ export async function PATCH(req: Request, { params }: Params) {
       html: body.html,
       files: body.files as never,
       requireUnclaimed: quick, // key writes fail if the doc was claimed mid-flight
+      // Agent-key writes: re-check the key is still live under the write lock
+      // (revocation between the recheck above and commit → 403 key_revoked).
+      requireAgentKeyLive: access.mode === "agent" ? access.keyId : undefined,
     });
     await extendQuickExpiry();
     // Feedback feed: content was replaced (skip no-op writes, which roll no
@@ -131,6 +136,11 @@ export async function PATCH(req: Request, { params }: Params) {
         error: "claimed",
         hint: "The doc was claimed; the quick key no longer grants access.",
       });
+    if (e instanceof AgentKeyRevokedError)
+      return json(403, {
+        error: "key_revoked",
+        hint: "This agent key no longer grants update access to this doc.",
+      });
     if (e instanceof IngestError)
       return json(ingestStatus(e.code), { error: e.code, message: e.message });
     throw e;
@@ -148,6 +158,29 @@ export async function DELETE(req: Request, { params }: Params) {
   const actor = await currentActor();
   const access = await resolveDocWriteAccess(req, id, actor, "delete");
   if (access.mode === "denied") return access.response;
+
+  // Quick-key delete: re-check under the row lock that the doc is STILL an
+  // unclaimed, live, unquarantined quick doc. A claim that lands between the
+  // access check and the delete flips ownerId, fails the guard, and wins the
+  // race — we report it as claimed, mirroring the PUT/PATCH TOCTOU semantics.
+  // (Agent keys never reach here: roleCan(editor, "delete") is false, so the
+  // "delete" access resolution denies them.) Owner deletes hold a session ACL
+  // and need no guard.
+  if (access.mode === "quick") {
+    const detail = await deleteDocDeep(
+      id,
+      (d) =>
+        d.ownerId === null &&
+        !d.quarantined &&
+        (d.expiresAt === null || d.expiresAt.getTime() > Date.now()),
+    );
+    if (!detail)
+      return json(403, {
+        error: "claimed",
+        hint: "The doc was claimed; the quick key no longer grants delete.",
+      });
+    return json(200, { ok: true });
+  }
 
   const deleted = await deleteDoc(id);
   if (!deleted) return json(404, { error: "not_found" });

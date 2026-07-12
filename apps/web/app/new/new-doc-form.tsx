@@ -31,39 +31,65 @@ export function NewDocForm({ signedIn }: { signedIn: boolean }) {
     setError(null);
     setBusy(true);
     const fd = new FormData(e.currentTarget);
-    // Signed in → the account door (/api/docs). Signed out → the zero-auth
-    // quick door (/api/quick), which returns a capability URL instead of
-    // attaching the doc to an account.
-    const res = await fetch(signedIn ? "/api/docs" : "/api/quick", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ title: fd.get("title"), html: fd.get("html") }),
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      if (!signedIn && res.status === 429) {
-        setError(
-          <>
-            You&rsquo;ve hit today&rsquo;s limit for quick docs —{" "}
-            <a href="/login">sign in</a> to create unlimited docs.
-          </>,
-        );
-      } else {
-        setError(data.message ?? data.error ?? "Something went wrong");
+    // On signed-in success we navigate away, so busy must stay true through the
+    // unload; every other exit clears it in `finally`.
+    let navigating = false;
+    try {
+      // Signed in → the account door (/api/docs). Signed out → the zero-auth
+      // quick door (/api/quick), which returns a capability URL instead of
+      // attaching the doc to an account.
+      const res = await fetch(signedIn ? "/api/docs" : "/api/quick", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ title: fd.get("title"), html: fd.get("html") }),
+      });
+      // Error bodies aren't always JSON — a proxy/timeout can return an HTML
+      // page — so parse defensively; a non-JSON body yields `null`, not a throw.
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        if (!signedIn && res.status === 429) {
+          setError(
+            <>
+              You&rsquo;ve hit today&rsquo;s limit for quick docs —{" "}
+              <a href="/login">sign in</a> to create unlimited docs.
+            </>,
+          );
+        } else if (res.status === 413) {
+          setError(
+            "That page is too large to publish — 2MB max, including inlined images and assets.",
+          );
+        } else {
+          setError(
+            data?.message ??
+              data?.error ??
+              "Something went wrong — please try again.",
+          );
+        }
+        return;
       }
-      setBusy(false);
-      return;
+      if (!data) {
+        setError("Couldn't read the server's response — please try again.");
+        return;
+      }
+      if (signedIn) {
+        navigating = true;
+        window.location.href = `/d/${data.slug}`;
+        return;
+      }
+      setQuick({
+        url: data.url,
+        claimUrl: data.claimUrl,
+        expiresAt: data.expiresAt,
+      });
+    } catch {
+      // The fetch itself threw: offline, aborted, DNS/TLS failure, or an
+      // oversized body rejected before any response came back.
+      setError(
+        "Couldn't publish — check your connection and try again; very large pages may exceed the upload limit.",
+      );
+    } finally {
+      if (!navigating) setBusy(false);
     }
-    if (signedIn) {
-      window.location.href = `/d/${data.slug}`;
-      return;
-    }
-    setQuick({
-      url: data.url,
-      claimUrl: data.claimUrl,
-      expiresAt: data.expiresAt,
-    });
-    setBusy(false);
   }
 
   async function copyUrl() {
@@ -103,8 +129,8 @@ export function NewDocForm({ signedIn }: { signedIn: boolean }) {
           </button>
         </div>
         <p className="quickstart-lesson">
-          This link is the key — anyone who has it can view and edit. Claim to
-          lock it down.
+          This link is the key — anyone who has it can view, edit, and delete.
+          Claim to lock it down.
         </p>
         <div className="quickstart-actions">
           <a className="btn btn-inline" href={quick.url}>

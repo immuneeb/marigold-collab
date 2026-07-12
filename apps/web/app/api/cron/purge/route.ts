@@ -1,6 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import {
   purgeExpiredQuickDocs,
+  purgeStaleLoginTokens,
   purgeStaleQuickCreations,
 } from "@marigold/core";
 import { json } from "@/lib/http";
@@ -31,12 +32,13 @@ function authorized(req: Request): boolean {
 async function runPurge(): Promise<Response> {
   const docs = await purgeExpiredQuickDocs();
   const rate = await purgeStaleQuickCreations();
+  const tokens = await purgeStaleLoginTokens();
   console.log(
     `[cron/purge] docs=${docs.docs} versions=${docs.versions} blobs=${docs.blobs} ` +
-      `rateRows=${rate.rows} candidates=${docs.candidates} ` +
+      `rateRows=${rate.rows} loginTokens=${tokens.rows} candidates=${docs.candidates} ` +
       `grace=${docs.graceDays}d cutoff=${docs.cutoff} rateCutoffDay=${rate.cutoffDay}`,
   );
-  return json(200, { ok: true, docs, quickCreations: rate });
+  return json(200, { ok: true, docs, quickCreations: rate, loginTokens: tokens });
 }
 
 export async function GET(req: Request) {

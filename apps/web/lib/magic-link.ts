@@ -1,4 +1,4 @@
-import { and, count, eq, gt, isNull } from "drizzle-orm";
+import { and, count, eq, gt, isNull, sql } from "drizzle-orm";
 import { config, generateQuickKey, hashQuickKey } from "@marigold/core";
 import { db, loginTokens } from "@marigold/db";
 import { normalizeEmail, sendMagicLinkEmail } from "./email";
@@ -26,30 +26,55 @@ export async function requestMagicLink(
 ): Promise<void> {
   const email = normalizeEmail(rawEmail);
   const now = new Date();
-
-  const outstanding = await db
-    .select({ n: count() })
-    .from(loginTokens)
-    .where(
-      and(
-        eq(loginTokens.email, email),
-        isNull(loginTokens.consumedAt),
-        gt(loginTokens.expiresAt, now),
-      ),
-    );
-  if ((outstanding[0]?.n ?? 0) >= MAX_OUTSTANDING_LINKS) return;
-
   const token = generateQuickKey();
-  await db.insert(loginTokens).values({
-    tokenHash: hashQuickKey(token),
-    email,
-    expiresAt: new Date(now.getTime() + MAGIC_LINK_TTL_MS),
+  const tokenHash = hashQuickKey(token);
+  const expiresAt = new Date(now.getTime() + MAGIC_LINK_TTL_MS);
+
+  // F6 — atomic cap: serialize concurrent requests for this address on a
+  // per-email advisory xact lock, then count-under-cap and insert in the SAME
+  // transaction. The old check-then-insert had a TOCTOU window where N
+  // simultaneous submissions could all read count < cap and all insert; the lock
+  // closes it so at most `MAX_OUTSTANDING_LINKS` live tokens ever exist per
+  // address. Returns false (nothing inserted → send nothing) once the cap is met.
+  const inserted = await db.transaction(async (tx) => {
+    await tx.execute(
+      sql`select pg_advisory_xact_lock(hashtext(${`magic-link:${email}`}))`,
+    );
+    const outstanding = await tx
+      .select({ n: count() })
+      .from(loginTokens)
+      .where(
+        and(
+          eq(loginTokens.email, email),
+          isNull(loginTokens.consumedAt),
+          gt(loginTokens.expiresAt, now),
+        ),
+      );
+    if ((outstanding[0]?.n ?? 0) >= MAX_OUTSTANDING_LINKS) return false;
+    await tx.insert(loginTokens).values({ tokenHash, email, expiresAt });
+    return true;
   });
+  // Silently a no-op beyond the cap (anti-spam): the caller answers identically
+  // whether or not anything was sent — no account enumeration.
+  if (!inserted) return;
 
   const link = `${config.appOrigin}/login/verify?token=${token}&callbackUrl=${encodeURIComponent(callbackUrl)}`;
-  // Deliver to the address as typed (normalization strips +tags, which some
-  // mail systems treat as routable); identity/shares key on the normalized form.
-  await sendMagicLinkEmail({ to: rawEmail.trim(), link });
+  try {
+    // Deliver to the address as typed (normalization strips +tags, which some
+    // mail systems treat as routable); identity/shares key on the normalized form.
+    await sendMagicLinkEmail({ to: rawEmail.trim(), link });
+  } catch (e) {
+    // F5 — a failed send must not consume the cap. Roll back the just-inserted
+    // token row (compensating delete) so a transient send error doesn't lock the
+    // address out for 15 min after three attempts. The caller still returns the
+    // generic {ok:true}; swallow both the send error and any delete error so the
+    // no-enumeration contract holds regardless.
+    await db
+      .delete(loginTokens)
+      .where(eq(loginTokens.tokenHash, tokenHash))
+      .catch(() => {});
+    console.warn(`[magic-link] send failed; rolled back token for ${email}:`, e);
+  }
 }
 
 /**

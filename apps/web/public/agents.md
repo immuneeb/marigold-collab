@@ -11,10 +11,10 @@ https://marigold-collab-web.vercel.app
 ## Three ways in
 
 1. **Quick docs — zero auth, start here.** `POST /api/quick` with HTML. No
-   account, no token. The response gives you a doc URL that carries the edit
-   capability in a `?k=` key: anyone holding the URL can view and edit it, in
-   the browser and via this API alike. Perfect for disposable, "look at this"
-   docs.
+   account, no token. The response gives you a doc URL that carries the full edit
+   capability in a `?k=` key: anyone holding the URL can view, edit, and delete
+   it, in the browser and via this API alike. The link IS the key — treat it like
+   one. Perfect for disposable, "look at this" docs.
 2. **MCP — the full product.** Remote MCP server at `/api/mcp` (OAuth 2.1,
    dynamic client registration). Tools: `create_doc`, `update_doc`,
    `list_docs`, `get_doc`, `share_doc`, `delete_doc`, `get_comments`,
@@ -27,7 +27,7 @@ https://marigold-collab-web.vercel.app
 
 ```
 POST /api/quick ──► unclaimed doc, URL carries the key (?k=)
-      │                 · anyone with the URL views AND edits
+      │                 · anyone with the URL views, edits, AND deletes
       │                 · link-visible only — never listed anywhere
       │                 · expires ~30 days after last write (each write renews)
       ▼

@@ -1,5 +1,6 @@
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import {
+  agentKeys,
   blobs as blobsTable,
   comments,
   db,
@@ -99,6 +100,14 @@ export interface UpdateDocInput {
    * Read-modify-write callers (patch, inline-edit) pass the version they read so
    * a concurrent commit in the read→write window can't be silently clobbered. */
   expectedLatestVersionId?: string;
+  /** Agent-key writes only: the agent_keys.id backing this request. The row is
+   * re-checked `FOR UPDATE` inside the write transaction and the write fails with
+   * AgentKeyRevokedError if the key is gone or revoked — closing the window
+   * between the route's pre-check and the commit (a concurrent revoke either
+   * commits before our lock, so we abort, or blocks until we commit, so it only
+   * affects later writes). The quick path gets the same atomicity from
+   * requireUnclaimed's in-transaction CAS. */
+  requireAgentKeyLive?: string;
 }
 
 export interface VersionResult {
@@ -183,16 +192,64 @@ async function persistContent(
   await store.putManifest(versionId, ing.manifest);
 }
 
-async function recordBlobRows(tx: Tx, ing: IngestResult): Promise<void> {
+/**
+ * Serialize a writer against the blob GC (deleteDocDeep) per content hash: take
+ * a Postgres advisory xact lock on every referenced sha. SORTED, so two writers
+ * or a writer+GC touching overlapping sha sets always acquire in the same order
+ * and can never deadlock. Held until the surrounding transaction commits. The
+ * GC (deleteDocDeep) takes the same locks on its candidate shas before its
+ * reference-count query, so the two can never interleave: either the writer's
+ * version row commits first (the GC's ref-count sees it and keeps the blob) or
+ * the GC deletes first (the writer's recordBlobRows then finds the row gone and
+ * re-persists — see recordBlobRows / the post-commit reput in create/updateDoc).
+ */
+async function lockShas(tx: Tx, shas: string[]): Promise<void> {
+  for (const sha of [...new Set(shas)].sort()) {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${sha}))`);
+  }
+}
+
+/**
+ * Record content-addressed blob bookkeeping rows for a version. Returns the shas
+ * whose row was ABSENT at insert time (a fresh insert, not a dedup conflict):
+ * the blob GC deleted that row after our putBlob, having judged the sha orphaned
+ * before this version's row committed. The caller re-persists those bytes AFTER
+ * commit (a putBlob inside the txn would deadlock the pg driver, which reuses the
+ * pooled `db` connection against the row we just row-locked here). Callers MUST
+ * hold the per-sha advisory locks (lockShas) so this insert is serialized against
+ * the GC's row deletion. (For the fs/r2 drivers the row is only ever created
+ * here, so a new sha always reports "absent" and the reput is a harmless
+ * idempotent no-op — the signal is precise only for the pg driver, where putBlob
+ * creates the row with its bytes.)
+ */
+async function recordBlobRows(tx: Tx, ing: IngestResult): Promise<string[]> {
+  const missing: string[] = [];
   for (const f of ing.files) {
-    await tx
+    const inserted = await tx
       .insert(blobsTable)
       .values({
         sha256: f.sha256,
         byteSize: f.bytes.byteLength,
         storageKey: `blobs/${f.sha256}`,
       })
-      .onConflictDoNothing();
+      .onConflictDoNothing()
+      .returning({ sha256: blobsTable.sha256 });
+    if (inserted.length > 0) missing.push(f.sha256);
+  }
+  return missing;
+}
+
+/** Re-persist bytes for shas the GC removed between our putBlob and our version
+ * commit (recordBlobRows flagged their row as freshly (re)created). Runs after
+ * the write txn so the committed version reference is never left dangling. */
+async function reputMissing(
+  store: BlobStore,
+  ing: IngestResult,
+  missingShas: string[],
+): Promise<void> {
+  for (const sha of missingShas) {
+    const f = ing.files.find((x) => x.sha256 === sha);
+    if (f) await store.putBlob(sha, f.bytes);
   }
 }
 
@@ -212,9 +269,13 @@ export async function createDoc(input: CreateDocInput): Promise<VersionResult> {
   const versionId = newId("ver");
 
   // Storage first (blobs + manifest), then the DB refs.
-  await persistContent(getBlobStore(), versionId, ing);
+  const store = getBlobStore();
+  await persistContent(store, versionId, ing);
 
+  let missingShas: string[] = [];
   await db.transaction(async (tx) => {
+    // F0: serialize against the blob GC before touching any blob row.
+    await lockShas(tx, ing.files.map((f) => f.sha256));
     await tx.insert(docs).values({
       id: docId,
       slug,
@@ -237,13 +298,14 @@ export async function createDoc(input: CreateDocInput): Promise<VersionResult> {
       byteSize: ing.byteSize,
       title: input.title ?? null,
     });
-    await recordBlobRows(tx, ing);
+    missingShas = await recordBlobRows(tx, ing);
     // P1 auto-publishes so paste -> URL renders immediately.
     await tx
       .update(docs)
       .set({ latestVersionId: versionId, publishedVersionId: versionId })
       .where(eq(docs.id, docId));
   });
+  await reputMissing(store, ing, missingShas);
 
   return {
     docId,
@@ -275,6 +337,16 @@ export class StaleVersionError extends Error {
   ) {
     super(`doc ${docId} changed since read (latest is ${currentVersionId})`);
     this.name = "StaleVersionError";
+  }
+}
+
+/** Thrown when an agent-key write (requireAgentKeyLive) finds the key gone or
+ * revoked under the write lock — the key was revoked between the route's
+ * pre-check and the commit (surfaced as 403 key_revoked). */
+export class AgentKeyRevokedError extends Error {
+  constructor(public keyId: string) {
+    super(`agent key ${keyId} was revoked; the write no longer applies`);
+    this.name = "AgentKeyRevokedError";
   }
 }
 
@@ -348,11 +420,13 @@ export async function updateDoc(input: UpdateDocInput): Promise<VersionResult> {
   )[0];
 
   // New content: generate the id and persist storage BEFORE the ref-moving txn.
+  const store = getBlobStore();
   const newVersionId = existing ? null : newId("ver");
   if (newVersionId) {
-    await persistContent(getBlobStore(), newVersionId, ing);
+    await persistContent(store, newVersionId, ing);
   }
 
+  let missingShas: string[] = [];
   const result = await db.transaction(async (tx) => {
     // Lock the doc row: serializes ordinal assignment + ref moves against
     // concurrent update_doc calls (no duplicate ordinal).
@@ -369,6 +443,25 @@ export async function updateDoc(input: UpdateDocInput): Promise<VersionResult> {
     // row lock, where a concurrent claim can no longer interleave.
     if (input.requireUnclaimed && locked?.ownerId != null)
       throw new DocClaimedError(doc.id);
+
+    // Agent-key writes: re-check the key IS still live under a row lock, closing
+    // the window between the route's pre-check and this commit. A concurrent
+    // revoke (plain UPDATE) either committed first — we see revokedAt and abort —
+    // or blocks on this lock until we commit, so it only affects later writes.
+    // Residual (accepted): revoking the MINTER's underlying grant mid-flight is
+    // not caught here (effective role is computed at auth via attenuate); it lands
+    // on the next write. Only direct key revocation is made atomic.
+    if (input.requireAgentKeyLive != null) {
+      const k = (
+        await tx
+          .select({ id: agentKeys.id, revokedAt: agentKeys.revokedAt })
+          .from(agentKeys)
+          .where(eq(agentKeys.id, input.requireAgentKeyLive))
+          .for("update")
+      )[0];
+      if (!k || k.revokedAt != null)
+        throw new AgentKeyRevokedError(input.requireAgentKeyLive);
+    }
 
     // Optimistic-concurrency CAS under the lock: a read-modify-write caller
     // patched the version it read; if another write committed in between, the
@@ -406,7 +499,10 @@ export async function updateDoc(input: UpdateDocInput): Promise<VersionResult> {
         byteSize: ing.byteSize,
         title: input.title ?? doc.title,
       });
-      await recordBlobRows(tx, ing);
+      // F0: serialize against the blob GC before touching any blob row (doc row
+      // is already locked above, so lock ordering is doc-row → shas everywhere).
+      await lockShas(tx, ing.files.map((f) => f.sha256));
+      missingShas = await recordBlobRows(tx, ing);
     }
 
     const set: {
@@ -426,6 +522,8 @@ export async function updateDoc(input: UpdateDocInput): Promise<VersionResult> {
 
     return { versionId, ordinal };
   });
+
+  await reputMissing(store, ing, missingShas);
 
   // P5: re-anchor comments against the new content.
   if (!existing) {
@@ -488,24 +586,53 @@ export interface DeleteDocDetail {
   orphanShas: string[];
 }
 
+/** State of the doc read `FOR UPDATE` just before deletion, handed to a
+ * {@link DeleteGuard} so the caller can veto a delete that has been overtaken by
+ * a concurrent claim/expiry/quarantine change. */
+export interface DeleteGuardState {
+  ownerId: string | null;
+  expiresAt: Date | null;
+  quarantined: boolean;
+}
+
+/**
+ * Under-row-lock deletion guard: return true to proceed, false to abort. A claim
+ * (or any state change) landing between the caller's auth check and this lock
+ * flips the state, so the guard fails and the delete is refused — the claim wins
+ * the race. Owner-initiated deletes pass no guard (they hold a session ACL, not
+ * a race-prone key).
+ */
+export type DeleteGuard = (state: DeleteGuardState) => boolean;
+
 /**
  * Permanently delete a doc. The docs row delete cascades to versions, comments,
  * shares, and network grants. Blobs are content-addressed and dedup'd across
  * docs, so a blob is purged only when no surviving version still references its
  * sha — computed inside the same transaction as the delete. External storage
- * cleanup runs after commit and is best-effort: a leftover content-addressed
- * blob is unreachable garbage, never a broken doc.
+ * cleanup runs after commit and is best-effort (F7): a leftover content-addressed
+ * blob is unreachable, unreferenced garbage, never a broken doc, so a store error
+ * must not fail an already-committed delete.
  *
- * `guard` (the purge path): delete only if the doc is STILL an unclaimed quick
- * doc whose expiry predates the cutoff — re-checked under the row lock, so a
- * claim that lands between candidate selection and deletion always wins (claim
- * sets ownerId and clears expiresAt, failing the guard).
+ * F0 (blob GC vs. concurrent writer): before the reference-count query we take a
+ * per-sha advisory xact lock on every candidate sha (see lockShas), the same
+ * locks create/updateDoc take on the shas they reference. That serializes this
+ * GC against in-flight writers so we can never delete bytes a writer is about to
+ * reference: writer-first → our ref-count sees the new version and keeps the
+ * blob; GC-first → the writer's recordBlobRows finds the row gone and re-persists.
+ * The post-commit store.deleteBlob is only for fs/r2 file removal (the pg driver
+ * deleted the bytes with the row, under the lock). For pg that call is a
+ * reference-guarded, atomic DELETE (see pgBlobStore.deleteBlob) so it can never
+ * stomp a writer's restore. For fs/r2 a narrow residual remains — the file rm is
+ * post-commit and not atomic with a reference re-check — but it self-heals on the
+ * next write of that content, fs is dev-only, and the deployed driver is pg.
+ *
+ * `guard`: a predicate re-checked under the row lock (see {@link DeleteGuard}).
  *
  * Returns what was removed, or null if the doc is missing / the guard failed.
  */
 export async function deleteDocDeep(
   docId: string,
-  guard?: { unclaimedAndExpiredBefore: Date },
+  guard?: DeleteGuard,
 ): Promise<DeleteDocDetail | null> {
   const result = await db.transaction(async (tx) => {
     const doc = (
@@ -514,6 +641,7 @@ export async function deleteDocDeep(
           id: docs.id,
           ownerId: docs.ownerId,
           expiresAt: docs.expiresAt,
+          quarantined: docs.quarantined,
         })
         .from(docs)
         .where(eq(docs.id, docId))
@@ -522,11 +650,11 @@ export async function deleteDocDeep(
     if (!doc) return null;
     if (
       guard &&
-      !(
-        doc.ownerId === null &&
-        doc.expiresAt !== null &&
-        doc.expiresAt.getTime() < guard.unclaimedAndExpiredBefore.getTime()
-      )
+      !guard({
+        ownerId: doc.ownerId,
+        expiresAt: doc.expiresAt,
+        quarantined: doc.quarantined,
+      })
     )
       return null;
 
@@ -539,6 +667,10 @@ export async function deleteDocDeep(
         versions.flatMap((v) => Object.values((v.manifest ?? {}) as Manifest)),
       ),
     ];
+
+    // F0: lock every candidate sha BEFORE the reference-count query so a
+    // concurrent writer can't reference a sha we're about to judge orphaned.
+    await lockShas(tx, candidateShas);
 
     await tx.delete(docs).where(eq(docs.id, docId));
 
@@ -571,12 +703,24 @@ export async function deleteDocDeep(
 
   if (!result) return null;
 
+  // F7: post-commit store cleanup is best-effort. The delete already committed;
+  // a transient store error here must not turn a done delete into a 500 "failed"
+  // lie. Any bytes left behind are content-addressed and unreferenced — harmless
+  // garbage the next purge (or a future GC) can reclaim.
   const store = getBlobStore();
   for (const versionId of result.versionIds) {
-    await store.deleteManifest(versionId);
+    try {
+      await store.deleteManifest(versionId);
+    } catch (e) {
+      console.warn(`[delete] manifest cleanup failed for ${versionId}:`, e);
+    }
   }
   for (const sha of result.orphanShas) {
-    await store.deleteBlob(sha);
+    try {
+      await store.deleteBlob(sha);
+    } catch (e) {
+      console.warn(`[delete] blob cleanup failed for ${sha}:`, e);
+    }
   }
   return result;
 }

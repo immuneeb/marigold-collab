@@ -36,10 +36,18 @@ vi.mock("@marigold/db", async () => {
   };
 });
 
-import { blobs, db, docs, docVersions, quickCreations } from "@marigold/db";
+import {
+  blobs,
+  db,
+  docs,
+  docVersions,
+  loginTokens,
+  quickCreations,
+} from "@marigold/db";
 import {
   DEFAULT_PURGE_GRACE_DAYS,
   purgeExpiredQuickDocs,
+  purgeStaleLoginTokens,
   purgeStaleQuickCreations,
 } from "../src/purge";
 import { deleteDocDeep } from "../src/versioning";
@@ -92,6 +100,13 @@ create table quick_creations (
   count integer not null default 0,
   primary key (ip_hash, day)
 );
+create table login_tokens (
+  token_hash text primary key,
+  email text not null,
+  expires_at timestamptz not null,
+  consumed_at timestamptz,
+  created_at timestamptz not null default now()
+);
 `;
 
 let pg: PGlite;
@@ -111,7 +126,9 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  await pg.exec("truncate table docs, doc_versions, blobs, quick_creations cascade");
+  await pg.exec(
+    "truncate table docs, doc_versions, blobs, quick_creations, login_tokens cascade",
+  );
 });
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -279,9 +296,13 @@ describe("deleteDocDeep guard (claim wins the race)", () => {
       .set({ ownerId: "usr_9", expiresAt: null, quickKeyHash: null })
       .where(eq(docs.id, "raced"));
 
-    const detail = await deleteDocDeep("raced", {
-      unclaimedAndExpiredBefore: cutoff,
-    });
+    const detail = await deleteDocDeep(
+      "raced",
+      (d) =>
+        d.ownerId === null &&
+        d.expiresAt !== null &&
+        d.expiresAt.getTime() < cutoff.getTime(),
+    );
 
     expect(detail).toBeNull();
     expect(await allDocIds()).toEqual(["raced"]);
@@ -313,5 +334,33 @@ describe("purgeStaleQuickCreations", () => {
 
     // Idempotent.
     expect((await purgeStaleQuickCreations()).rows).toBe(0);
+  });
+});
+
+describe("purgeStaleLoginTokens", () => {
+  it("removes tokens expired past retention, keeps recent ones (F10)", async () => {
+    const at = (n: number) => daysAgo(n); // token expiry n days ago (or ahead)
+    await db.insert(loginTokens).values([
+      { tokenHash: "t-live", email: "a@x.com", expiresAt: daysAgo(-1) }, // valid
+      { tokenHash: "t-recent", email: "a@x.com", expiresAt: at(3) }, // expired 3d ago
+      { tokenHash: "t-old", email: "b@x.com", expiresAt: at(10) }, // expired 10d ago
+      {
+        tokenHash: "t-old-consumed",
+        email: "c@x.com",
+        expiresAt: at(30),
+        consumedAt: at(30),
+      }, // consumed + long expired
+    ]);
+
+    const res = await purgeStaleLoginTokens(); // 7-day retention
+
+    expect(res.rows).toBe(2); // t-old + t-old-consumed
+    const left = (
+      await db.select({ h: loginTokens.tokenHash }).from(loginTokens)
+    ).map((r) => r.h);
+    expect(left.sort()).toEqual(["t-live", "t-recent"]);
+
+    // Idempotent.
+    expect((await purgeStaleLoginTokens()).rows).toBe(0);
   });
 });

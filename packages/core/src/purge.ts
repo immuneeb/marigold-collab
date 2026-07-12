@@ -1,5 +1,5 @@
 import { and, asc, isNotNull, isNull, lt } from "drizzle-orm";
-import { db, docs, quickCreations } from "@marigold/db";
+import { db, docs, loginTokens, quickCreations } from "@marigold/db";
 import { deleteDocDeep } from "./versioning";
 
 // Purge job (MUN-66): `expiresAt` only GATES access — this is the thing that
@@ -22,6 +22,10 @@ export const DEFAULT_PURGE_BATCH = 100;
 /** `quick_creations` rows are per-IP-per-UTC-day buckets — only today's bucket
  * is ever read, so anything older than a week is pure dead weight. */
 export const QUICK_CREATIONS_RETENTION_DAYS = 7;
+
+/** Magic-link tokens are single-use with a 15-min TTL; a week past expiry they
+ * are dead weight (consumed or not). Kept a few days only for support/forensics. */
+export const LOGIN_TOKENS_RETENTION_DAYS = 7;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -83,9 +87,13 @@ export async function purgeExpiredQuickDocs(
   let versionsPurged = 0;
   let blobsPurged = 0;
   for (const { id } of candidates) {
-    const detail = await deleteDocDeep(id, {
-      unclaimedAndExpiredBefore: cutoff,
-    });
+    const detail = await deleteDocDeep(
+      id,
+      (d) =>
+        d.ownerId === null &&
+        d.expiresAt !== null &&
+        d.expiresAt.getTime() < cutoff.getTime(),
+    );
     if (!detail) continue; // claimed (or gone) since selection — skip, never delete
     docsPurged += 1;
     versionsPurged += detail.versionIds.length;
@@ -127,4 +135,30 @@ export async function purgeStaleQuickCreations(
     .returning({ day: quickCreations.day });
 
   return { rows: deleted.length, cutoffDay };
+}
+
+export interface PurgeLoginTokensResult {
+  rows: number;
+  cutoff: string; // ISO timestamp: tokens that expired before this were removed
+}
+
+/**
+ * Delete magic-link tokens whose expiry is more than the retention window
+ * (default 7 days) in the past — consumed or not. They are single-use and
+ * short-TTL, so a long-expired row can never authenticate anything; this just
+ * keeps `login_tokens` from growing without bound. Idempotent.
+ */
+export async function purgeStaleLoginTokens(
+  opts: { retentionDays?: number; now?: Date } = {},
+): Promise<PurgeLoginTokensResult> {
+  const retentionDays = opts.retentionDays ?? LOGIN_TOKENS_RETENTION_DAYS;
+  const now = opts.now ?? new Date();
+  const cutoff = new Date(now.getTime() - retentionDays * DAY_MS);
+
+  const deleted = await db
+    .delete(loginTokens)
+    .where(lt(loginTokens.expiresAt, cutoff))
+    .returning({ tokenHash: loginTokens.tokenHash });
+
+  return { rows: deleted.length, cutoff: cutoff.toISOString() };
 }
