@@ -12,8 +12,8 @@ type Params = { params: Promise<{ id: string }> };
 // Graduation: valid quick key + signed-in session → the doc becomes a standard
 // private owned doc. The key hash is nulled (burned) in the same statement, so
 // the old ?k= URL stops granting anything — that's the point of claiming.
-// Expiry is cleared too: claiming rescues an expired doc (expiry only gates
-// access today; nothing purges rows yet).
+// Expiry is cleared too: claiming rescues an expired doc — until the daily
+// purge job (packages/core purge.ts, PURGE_GRACE_DAYS after expiry) removes it.
 export async function POST(req: Request, { params }: Params) {
   const { id } = await params;
   const actor = await currentActor();

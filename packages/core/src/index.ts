@@ -9,6 +9,7 @@ export * from "./slug";
 export * from "./acl";
 export * from "./quick";
 export * from "./agent-keys";
+export * from "./purge";
 export * from "./versioning";
 export * from "./events";
 export * from "./tokens";
