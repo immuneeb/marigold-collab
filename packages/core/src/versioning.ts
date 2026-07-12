@@ -482,6 +482,12 @@ export async function publishDoc(
     .where(eq(docs.id, docId));
 }
 
+/** What deleteDocDeep removed — the purge job logs/aggregates these counts. */
+export interface DeleteDocDetail {
+  versionIds: string[];
+  orphanShas: string[];
+}
+
 /**
  * Permanently delete a doc. The docs row delete cascades to versions, comments,
  * shares, and network grants. Blobs are content-addressed and dedup'd across
@@ -489,18 +495,40 @@ export async function publishDoc(
  * sha — computed inside the same transaction as the delete. External storage
  * cleanup runs after commit and is best-effort: a leftover content-addressed
  * blob is unreachable garbage, never a broken doc.
- * Returns false if the doc does not exist.
+ *
+ * `guard` (the purge path): delete only if the doc is STILL an unclaimed quick
+ * doc whose expiry predates the cutoff — re-checked under the row lock, so a
+ * claim that lands between candidate selection and deletion always wins (claim
+ * sets ownerId and clears expiresAt, failing the guard).
+ *
+ * Returns what was removed, or null if the doc is missing / the guard failed.
  */
-export async function deleteDoc(docId: string): Promise<boolean> {
+export async function deleteDocDeep(
+  docId: string,
+  guard?: { unclaimedAndExpiredBefore: Date },
+): Promise<DeleteDocDetail | null> {
   const result = await db.transaction(async (tx) => {
     const doc = (
       await tx
-        .select({ id: docs.id })
+        .select({
+          id: docs.id,
+          ownerId: docs.ownerId,
+          expiresAt: docs.expiresAt,
+        })
         .from(docs)
         .where(eq(docs.id, docId))
         .for("update")
     )[0];
     if (!doc) return null;
+    if (
+      guard &&
+      !(
+        doc.ownerId === null &&
+        doc.expiresAt !== null &&
+        doc.expiresAt.getTime() < guard.unclaimedAndExpiredBefore.getTime()
+      )
+    )
+      return null;
 
     const versions = await tx
       .select({ id: docVersions.id, manifest: docVersions.manifest })
@@ -521,16 +549,17 @@ export async function deleteDoc(docId: string): Promise<boolean> {
         candidateShas.map((s) => sql`${s}`),
         sql`, `,
       );
-      const rows = await tx.execute(sql`
+      const res = await tx.execute(sql`
         select distinct e.value as sha
         from ${docVersions}, jsonb_each_text(${docVersions.manifest}) as e
         where e.value in (${shaList})
       `);
-      const referenced = new Set(
-        Array.from(rows as Iterable<Record<string, unknown>>).map(
-          (r) => r.sha as string,
-        ),
-      );
+      // Driver-shape tolerant: postgres.js returns an array-like RowList;
+      // other pg drivers (e.g. PGlite in tests) return { rows: [...] }.
+      const rows: Record<string, unknown>[] = Array.isArray(res)
+        ? (res as Record<string, unknown>[])
+        : ((res as { rows?: Record<string, unknown>[] }).rows ?? []);
+      const referenced = new Set(rows.map((r) => r.sha as string));
       orphanShas = candidateShas.filter((s) => !referenced.has(s));
       if (orphanShas.length > 0) {
         await tx.delete(blobsTable).where(inArray(blobsTable.sha256, orphanShas));
@@ -540,7 +569,7 @@ export async function deleteDoc(docId: string): Promise<boolean> {
     return { versionIds: versions.map((v) => v.id), orphanShas };
   });
 
-  if (!result) return false;
+  if (!result) return null;
 
   const store = getBlobStore();
   for (const versionId of result.versionIds) {
@@ -549,7 +578,12 @@ export async function deleteDoc(docId: string): Promise<boolean> {
   for (const sha of result.orphanShas) {
     await store.deleteBlob(sha);
   }
-  return true;
+  return result;
+}
+
+/** Permanently delete a doc (owner-initiated path). Returns false if missing. */
+export async function deleteDoc(docId: string): Promise<boolean> {
+  return (await deleteDocDeep(docId)) !== null;
 }
 
 export interface ResolvedDoc {
