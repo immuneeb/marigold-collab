@@ -1185,11 +1185,38 @@ select {
 }
 kbd {
   display: inline-block;
-  font: 600 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font:
+    600 12px/1 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
   color: var(--marigold-dark);
   background: var(--accent-soft);
   border: 1px solid var(--line);
   border-bottom-width: 2px;
   border-radius: 6px;
   padding: 4px 6px;
+}
+
+/* Interaction (mg-control tap) failure toast — transient, auto-dismisses. */
+.itx-toast {
+  position: fixed;
+  bottom: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 60;
+  padding: 8px 14px;
+  font-size: 12.5px;
+  border-radius: 999px;
+  color: #b3261e;
+  background: #fdece9;
+  border: 1px solid #f4c7c0;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+}
+@media (prefers-color-scheme: dark) {
+  .itx-toast {
+    color: #ffb4a8;
+    background: #3a1512;
+    border-color: #5c241d;
+  }
 }

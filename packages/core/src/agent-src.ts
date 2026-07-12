@@ -55,8 +55,20 @@ export const ANCHOR_AGENT_JS = String.raw`(function () {
   function captureContent(node) {
     var clone = node.cloneNode(true);
     Array.prototype.forEach.call(
-      clone.querySelectorAll("#__mg_controls, script[data-mg-agent]"),
+      clone.querySelectorAll("#__mg_controls, script[data-mg-agent], [data-mg-ui]"),
       function (n) { n.parentNode && n.parentNode.removeChild(n); }
+    );
+    // Un-wire cloned <mg-control>s: agent-added state must never persist into
+    // doc source (a serialized data-mg-wired would block re-init on reload).
+    Array.prototype.forEach.call(
+      clone.querySelectorAll("[data-mg-wired], [data-mg-state], [data-mg-disabled], [data-mg-sel], [data-mg-tap]"),
+      function (n) {
+        n.removeAttribute("data-mg-wired");
+        n.removeAttribute("data-mg-state");
+        n.removeAttribute("data-mg-disabled");
+        n.removeAttribute("data-mg-sel");
+        n.removeAttribute("data-mg-tap");
+      }
     );
     return clone.innerHTML;
   }
@@ -262,7 +274,8 @@ export const ANCHOR_AGENT_JS = String.raw`(function () {
     while (el && el.nodeType === 1 && el !== document.body) {
       var t = el.tagName;
       if (t === "A" || t === "BUTTON" || t === "INPUT" || t === "TEXTAREA" ||
-          t === "SELECT" || t === "LABEL" || t === "SUMMARY" || t === "OPTION") return true;
+          t === "SELECT" || t === "LABEL" || t === "SUMMARY" || t === "OPTION" ||
+          t === "MG-CONTROL") return true;
       el = el.parentElement;
     }
     return false;
@@ -437,6 +450,140 @@ export const ANCHOR_AGENT_JS = String.raw`(function () {
     handleTap(e.target, e.clientX, e.clientY, e);
   }, true);
 
+  // ── interactive controls (<mg-control>) — one-tap typed reader signals ──
+  // The agent renders + wires author-placed <mg-control name=...> elements.
+  // A tap computes the next value locally (optimistic paint) and relays it to
+  // the parent shell, which persists it — this frame has no network path
+  // (CSP connect-src 'none'). The parent hydrates saved values and enables
+  // taps via an "interactions" message; until then controls render muted.
+  // Types: reaction (👍/👎, or a values attr), rating (1..max stars), choice
+  // (values enum), toggle (bool), button (fire-and-forget). Authors may
+  // instead supply their own child elements carrying data-mg-value.
+  var ctrlEnabled = false;
+  var ctrlValues = {};
+  var CTRL_STYLE =
+    "mg-control{display:inline-flex;gap:6px;align-items:center;vertical-align:middle}" +
+    "mg-control [data-mg-tap]{cursor:pointer;-webkit-user-select:none;user-select:none}" +
+    "mg-control [data-mg-ui]{border:1px solid #d8d8d8;background:transparent;border-radius:999px;padding:4px 10px;font:13px/1 system-ui,sans-serif;color:inherit;opacity:.75}" +
+    "mg-control [data-mg-ui]:hover{border-color:#e8870f;opacity:1}" +
+    "mg-control [data-mg-ui][data-mg-sel]{background:#fdf3e3;border-color:#e8870f;color:#b8690a;opacity:1}" +
+    "mg-control[data-mg-disabled] [data-mg-tap]{pointer-events:none;opacity:.45}";
+  function injectCtrlStyle() {
+    if (document.getElementById("__mg_ctrl_style")) return;
+    var st = document.createElement("style");
+    st.id = "__mg_ctrl_style";
+    st.textContent = CTRL_STYLE;
+    (document.head || document.documentElement).appendChild(st);
+  }
+  function ctrlTypeOf(el) {
+    var t = (el.getAttribute("type") || "reaction").toLowerCase();
+    return t === "rating" || t === "choice" || t === "toggle" || t === "button" ? t : "reaction";
+  }
+  function ctrlTaps(el) { return el.querySelectorAll("[data-mg-value]"); }
+  function mkTap(label, value, title) {
+    var b = document.createElement("button");
+    b.type = "button";
+    b.setAttribute("data-mg-ui", "");
+    b.setAttribute("data-mg-tap", "");
+    b.setAttribute("data-mg-value", value);
+    if (title) b.title = title;
+    b.textContent = label;
+    return b;
+  }
+  function renderCtrl(el, type) {
+    var i;
+    if (type === "rating") {
+      var max = Math.max(1, Math.min(10, parseInt(el.getAttribute("max") || "5", 10) || 5));
+      for (i = 1; i <= max; i++) el.appendChild(mkTap("★", String(i), i + " of " + max));
+    } else if (type === "toggle") {
+      el.appendChild(mkTap(el.getAttribute("label") || "✓", "true", ""));
+    } else if (type === "button") {
+      el.appendChild(mkTap(el.getAttribute("label") || "Go", el.getAttribute("value") || "pressed", ""));
+    } else {
+      var vals = (el.getAttribute("values") || (type === "reaction" ? "up,down" : ""))
+        .split(",")
+        .map(function (s) { return s.trim(); })
+        .filter(function (s) { return s.length > 0; });
+      for (i = 0; i < vals.length; i++) {
+        var v = vals[i];
+        var label = type === "reaction" ? (v === "up" ? "👍" : v === "down" ? "👎" : v) : v;
+        el.appendChild(mkTap(label, v, v));
+      }
+    }
+  }
+  // Next value on tap: toggle flips; button always fires its value; the others
+  // set — and re-tapping the selected value clears (null).
+  function ctrlNext(type, cur, raw) {
+    if (type === "toggle") return cur !== true;
+    if (type === "button") return raw;
+    if (type === "rating") { var n = parseInt(raw, 10) || 0; return cur === n ? null : n; }
+    return cur === raw ? null : raw;
+  }
+  function paintCtrl(el, type, name) {
+    var cur = ctrlValues[name];
+    var has = cur !== undefined && cur !== null;
+    if (has) el.setAttribute("data-mg-state", String(cur));
+    else el.removeAttribute("data-mg-state");
+    var taps = ctrlTaps(el);
+    for (var i = 0; i < taps.length; i++) {
+      var t = taps[i];
+      var raw = t.getAttribute("data-mg-value");
+      var sel = false;
+      if (has) {
+        if (type === "rating") sel = (parseInt(raw, 10) || 0) <= Number(cur);
+        else if (type === "toggle") sel = cur === true;
+        else sel = String(cur) === raw;
+      }
+      if (sel) t.setAttribute("data-mg-sel", "");
+      else t.removeAttribute("data-mg-sel");
+    }
+  }
+  function wireCtrl(el) {
+    if (el.getAttribute("data-mg-wired")) return;
+    el.setAttribute("data-mg-wired", "1");
+    var name = el.getAttribute("name");
+    var type = ctrlTypeOf(el);
+    var taps = ctrlTaps(el);
+    if (taps.length === 0) renderCtrl(el, type);
+    else {
+      // Author-supplied UI: mark the targets tappable (cursor/disabled styles).
+      for (var j = 0; j < taps.length; j++) taps[j].setAttribute("data-mg-tap", "");
+    }
+    if (!ctrlEnabled) el.setAttribute("data-mg-disabled", "");
+    el.addEventListener("click", function (e) {
+      var t = e.target;
+      while (t && t !== el && !(t.hasAttribute && t.hasAttribute("data-mg-value")))
+        t = t.parentElement;
+      if (!t || t === el || !t.hasAttribute("data-mg-value")) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (!ctrlEnabled) return;
+      var next = ctrlNext(type, ctrlValues[name], t.getAttribute("data-mg-value"));
+      ctrlValues[name] = next;
+      paintCtrl(el, type, name);
+      send({ type: "interaction", name: name, controlType: type, value: next, anchor: anchorFor(el) });
+    });
+    paintCtrl(el, type, name);
+  }
+  function initControls() {
+    var list = document.querySelectorAll("mg-control[name]");
+    if (list.length === 0) return;
+    injectCtrlStyle();
+    for (var i = 0; i < list.length; i++) wireCtrl(list[i]);
+  }
+  function applyInteractions(d) {
+    ctrlEnabled = !!d.enabled;
+    ctrlValues = d.values && typeof d.values === "object" ? d.values : {};
+    initControls(); // idempotent — wires any control added since load
+    var list = document.querySelectorAll("mg-control[name]");
+    for (var i = 0; i < list.length; i++) {
+      var el = list[i];
+      if (ctrlEnabled) el.removeAttribute("data-mg-disabled");
+      else el.setAttribute("data-mg-disabled", "");
+      paintCtrl(el, ctrlTypeOf(el), el.getAttribute("name"));
+    }
+  }
+
   window.addEventListener("message", function (e) {
     var d = e.data;
     if (!d || d[MG] !== 1) return;
@@ -446,11 +593,14 @@ export const ANCHOR_AGENT_JS = String.raw`(function () {
     else if (d.type === "editable") { editEnabled = !!d.on; if (!d.on) { endEdit(false); hideControls(); } }
     else if (d.type === "clearSelection") { try { window.getSelection().removeAllRanges(); } catch (err) {} lastSelKey = ""; }
     else if (d.type === "scrollTo") { var el = elFor(d.id); if (el) el.scrollIntoView({ block: "center", behavior: "smooth" }); }
+    else if (d.type === "interactions") { applyInteractions(d); }
   });
 
   window.addEventListener("scroll", schedule, true);
   window.addEventListener("resize", schedule);
   if (window.ResizeObserver) { try { new ResizeObserver(schedule).observe(document.documentElement); } catch (e) {} }
+
+  initControls();
 
   // Re-emit ready a few times: if the parent hasn't hydrated its message
   // listener yet, a single ready is lost. (The parent also proactively pushes

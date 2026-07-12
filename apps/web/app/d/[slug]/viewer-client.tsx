@@ -74,7 +74,9 @@ export function ViewerClient(props: {
   const versionIdRef = useRef(props.versionId);
   const queueRef = useRef<Map<string, string>>(new Map());
   const flushingRef = useRef(false);
-  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [saveState, setSaveState] = useState<
+    "idle" | "saving" | "saved" | "error"
+  >("idle");
   const [saveError, setSaveError] = useState<string | null>(null);
   // Title edits share the save indicator but not the version chain — a rename
   // is metadata and never rolls a version.
@@ -129,10 +131,7 @@ export function ViewerClient(props: {
     setCommentError(null);
   }, [draft]);
 
-  const roots = useMemo(
-    () => comments.filter((c) => !c.parentId),
-    [comments],
-  );
+  const roots = useMemo(() => comments.filter((c) => !c.parentId), [comments]);
   const openRoots = useMemo(
     () => roots.filter((c) => c.status !== "resolved"),
     [roots],
@@ -173,6 +172,106 @@ export function ViewerClient(props: {
     // which would make every comment look deleted.
     if (r && Array.isArray(r.comments)) setComments(r.comments);
   }, [props.docId, props.quick]);
+
+  // In-doc interactive controls (<mg-control>): the reader's saved values,
+  // pushed into the sandboxed frame as a hydrate ("interactions"); taps come
+  // back as "interaction" messages that we persist — the doc frame itself has
+  // no network path (CSP connect-src 'none'), exactly like comments.
+  const interactionsRef = useRef<Record<string, unknown>>({});
+  const [interactionError, setInteractionError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!interactionError) return;
+    const t = setTimeout(() => setInteractionError(null), 5000);
+    return () => clearTimeout(t);
+  }, [interactionError]);
+  const syncInteractions = useCallback(() => {
+    post({
+      type: "interactions",
+      values: interactionsRef.current,
+      enabled: canComment,
+    });
+  }, [post, canComment]);
+  const loadInteractions = useCallback(
+    async (authoritative = false) => {
+      const qs =
+        guest && guestName ? `?author=${encodeURIComponent(guestName)}` : "";
+      const r = await fetch(
+        `/api/docs/${props.docId}/interactions${qs}`,
+        props.quick
+          ? { headers: { "x-marigold-key": props.quick.editKey } }
+          : undefined,
+      )
+        .then((res) => (res.ok ? res.json() : null))
+        .catch(() => null);
+      if (r && Array.isArray(r.interactions)) {
+        const map: Record<string, unknown> = {};
+        for (const it of r.interactions as { name: string; value: unknown }[])
+          map[it.name] = it.value;
+        // Local (optimistic) values win unless we're reverting to server truth
+        // after a failed write — a tap mid-fetch must not get visually undone.
+        interactionsRef.current = authoritative
+          ? map
+          : { ...map, ...interactionsRef.current };
+        syncInteractions();
+      }
+    },
+    [props.docId, props.quick, guest, guestName, syncInteractions],
+  );
+  useEffect(() => {
+    void loadInteractions();
+  }, [loadInteractions]);
+  // Ref-latest (like shortcutRef): the message listener attaches once, the
+  // handler always sees this render's guest/name state.
+  const interactionRef = useRef<
+    (
+      d: {
+        name: string;
+        controlType: string;
+        value: unknown;
+        anchor?: unknown;
+      },
+      nameOverride?: string,
+    ) => void
+  >(() => {});
+  interactionRef.current = (d, nameOverride) => {
+    if (!canComment) return;
+    const author = (nameOverride ?? guestName).trim();
+    if (guest && !author) {
+      // First interaction and no saved name — ask once (same modal as
+      // comments), then re-run this tap.
+      setNamePrompt({ after: (n) => interactionRef.current(d, n) });
+      return;
+    }
+    if (guest) rememberGuestName(author);
+    // Optimistic: the agent already painted the tap; record it so handshake
+    // re-syncs don't wipe it while the POST is in flight.
+    if (d.value === null || d.value === undefined)
+      delete interactionsRef.current[d.name];
+    else interactionsRef.current[d.name] = d.value;
+    void (async () => {
+      const res = await fetch(`/api/docs/${props.docId}/interactions`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          ...(props.quick ? { "x-marigold-key": props.quick.editKey } : {}),
+        },
+        body: JSON.stringify({
+          name: d.name,
+          controlType: d.controlType,
+          value: d.value ?? null,
+          anchor: d.anchor,
+          versionId: versionIdRef.current,
+          ...(guest ? { author } : {}),
+        }),
+      }).catch(() => null);
+      if (!res || !res.ok) {
+        setInteractionError(
+          res ? await errorFrom(res) : "Network error — reaction not saved.",
+        );
+        void loadInteractions(true); // revert the optimistic paint to server truth
+      }
+    })();
+  };
 
   const trackedIds = useMemo(
     () =>
@@ -247,7 +346,8 @@ export function ViewerClient(props: {
         body: JSON.stringify({ title: next }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.message ?? data.error ?? "Rename failed");
+      if (!res.ok)
+        throw new Error(data.message ?? data.error ?? "Rename failed");
       savedTitleRef.current = data.title ?? "";
       setTitle(data.title ?? "");
       document.title = data.title || "Untitled"; // keep the tab label current
@@ -263,12 +363,17 @@ export function ViewerClient(props: {
   useEffect(() => {
     function onMsg(e: MessageEvent) {
       if (e.source !== iframeRef.current?.contentWindow) return;
-      const d = e.data as { __mg?: number; type?: string } & Record<string, unknown>;
+      const d = e.data as { __mg?: number; type?: string } & Record<
+        string,
+        unknown
+      >;
       if (!d || d.__mg !== 1) return;
       if (d.type === "ready") {
         post({ type: "track", ids: trackedIds });
         syncAgent();
-      } else if (d.type === "rects") setRects((d.rects as Record<string, Rect>) ?? {});
+        syncInteractions();
+      } else if (d.type === "rects")
+        setRects((d.rects as Record<string, Rect>) ?? {});
       else if (d.type === "placed") {
         setCommenting(false);
         setDraft({ anchor: d.anchor as Anchor });
@@ -285,6 +390,17 @@ export function ViewerClient(props: {
           queueRef.current.set(id, html); // latest edit per target wins
           void flushEdits();
         }
+      } else if (d.type === "interaction") {
+        // A tap on an in-doc <mg-control> — persist it (guest name flow and
+        // POST handled by the ref-latest handler).
+        interactionRef.current(
+          d as unknown as {
+            name: string;
+            controlType: string;
+            value: unknown;
+            anchor?: unknown;
+          },
+        );
       }
     }
     window.addEventListener("message", onMsg);
@@ -296,17 +412,26 @@ export function ViewerClient(props: {
     // is instead the slow one. Posts are idempotent.
     syncAgent();
     post({ type: "track", ids: trackedIds });
+    syncInteractions();
     let tries = 0;
     const iv = setInterval(() => {
       syncAgent();
       post({ type: "track", ids: trackedIds });
+      syncInteractions();
       if (++tries >= 4) clearInterval(iv);
     }, 250);
     return () => {
       window.removeEventListener("message", onMsg);
       clearInterval(iv);
     };
-  }, [post, trackedIds, props.canEdit, flushEdits, syncAgent]);
+  }, [
+    post,
+    trackedIds,
+    props.canEdit,
+    flushEdits,
+    syncAgent,
+    syncInteractions,
+  ]);
 
   useEffect(() => {
     refresh();
@@ -334,7 +459,8 @@ export function ViewerClient(props: {
   function selectThread(c: Comment) {
     setSelected(c.id);
     setOpen(true);
-    if (c.anchor?.marigoldId) post({ type: "scrollTo", id: c.anchor.marigoldId });
+    if (c.anchor?.marigoldId)
+      post({ type: "scrollTo", id: c.anchor.marigoldId });
     // The card may not exist until the sidebar opens on this very render.
     requestAnimationFrame(() => {
       document
@@ -485,7 +611,9 @@ export function ViewerClient(props: {
       }),
     }).catch(() => null);
     if (!res || !res.ok) {
-      setCommentError(res ? await errorFrom(res) : "Network error — not posted.");
+      setCommentError(
+        res ? await errorFrom(res) : "Network error — not posted.",
+      );
       return false; // keep the draft so the comment isn't lost
     }
     setCommentError(null);
@@ -517,7 +645,9 @@ export function ViewerClient(props: {
       }),
     }).catch(() => null);
     if (!res || !res.ok) {
-      setCommentError(res ? await errorFrom(res) : "Network error — not posted.");
+      setCommentError(
+        res ? await errorFrom(res) : "Network error — not posted.",
+      );
       return false;
     }
     setCommentError(null);
@@ -547,7 +677,11 @@ export function ViewerClient(props: {
     <div className="viewer">
       <header className="viewer-bar">
         <div className="viewer-left">
-          <Link href="/" className="wordmark" style={{ textDecoration: "none" }}>
+          <Link
+            href="/"
+            className="wordmark"
+            style={{ textDecoration: "none" }}
+          >
             🌼
           </Link>
           {props.canEdit ? (
@@ -685,6 +819,7 @@ export function ViewerClient(props: {
               // effect + agent ready-retries are the real handshake).
               post({ type: "track", ids: trackedIds });
               syncAgent();
+              syncInteractions();
             }}
           />
           <div className="overlay">
@@ -848,6 +983,12 @@ export function ViewerClient(props: {
           </aside>
         )}
       </div>
+
+      {interactionError && (
+        <div className="itx-toast" role="alert">
+          {interactionError}
+        </div>
+      )}
 
       {helpOpen && <ShortcutHelp onClose={() => setHelpOpen(false)} />}
     </div>
@@ -1256,7 +1397,10 @@ function CommentBody({ c, reply }: { c: Comment; reply?: boolean }) {
     <div className={reply ? "cmt-body reply" : "cmt-body"}>
       <span className="cmt-author">{c.authorName ?? "Someone"}</span>
       {c.guest && (
-        <span className="guest-chip" title="Commented as a guest via the doc link">
+        <span
+          className="guest-chip"
+          title="Commented as a guest via the doc link"
+        >
           guest
         </span>
       )}

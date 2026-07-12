@@ -1,8 +1,10 @@
+import { parse } from "node-html-parser";
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import {
   blobs as blobsTable,
   comments,
   db,
+  docInteractions,
   docs,
   docVersions,
   newId,
@@ -33,7 +35,11 @@ export async function reanchorComments(
   newHtml: string,
 ): Promise<void> {
   const roots = await db
-    .select({ id: comments.id, anchor: comments.anchor, status: comments.status })
+    .select({
+      id: comments.id,
+      anchor: comments.anchor,
+      status: comments.status,
+    })
     .from(comments)
     .where(and(eq(comments.docId, docId), isNull(comments.parentId)));
 
@@ -55,6 +61,64 @@ export async function reanchorComments(
         .update(comments)
         .set({ status: "orphaned", updatedAt: new Date() })
         .where(eq(comments.id, c.id));
+    }
+  }
+}
+
+/**
+ * Re-anchor reader interactions against a new version. Unlike comments,
+ * interactions carry a stable author-chosen key — the control `name` — so
+ * resolution is name-first: find the `<mg-control name=...>` in the new HTML
+ * and take its (position-derived, possibly shifted) marigoldId. The generic
+ * anchor chain is only a fallback; alone it mis-resolves agent-rendered
+ * controls after structural edits, because their stored source is an empty
+ * element (no text) and a structural id can now belong to a different element.
+ * Control gone → orphaned; the value is never dropped, and `updatedAt` is
+ * untouched (it means "when the reader tapped", not "when we re-anchored").
+ */
+export async function reanchorInteractions(
+  docId: string,
+  newVersionId: string,
+  newHtml: string,
+): Promise<void> {
+  const rows = await db
+    .select({
+      id: docInteractions.id,
+      name: docInteractions.name,
+      anchor: docInteractions.anchor,
+      orphaned: docInteractions.orphaned,
+    })
+    .from(docInteractions)
+    .where(eq(docInteractions.docId, docId));
+  if (rows.length === 0) return;
+
+  // One parse for the whole doc: name → the control's current marigoldId.
+  const idByName = new Map<string, string>();
+  for (const el of parse(newHtml, { comment: true }).querySelectorAll(
+    "mg-control[name]",
+  )) {
+    const name = el.getAttribute("name");
+    const mgid = el.getAttribute("data-marigold-id");
+    if (name && mgid && !idByName.has(name)) idByName.set(name, mgid);
+  }
+
+  for (const r of rows) {
+    const anchor = (r.anchor ?? {}) as CommentAnchor;
+    const rid = idByName.get(r.name) ?? resolveAnchor(newHtml, anchor);
+    if (rid) {
+      await db
+        .update(docInteractions)
+        .set({
+          anchoredVersionId: newVersionId,
+          anchor: { ...anchor, marigoldId: rid },
+          orphaned: false,
+        })
+        .where(eq(docInteractions.id, r.id));
+    } else if (!r.orphaned) {
+      await db
+        .update(docInteractions)
+        .set({ orphaned: true })
+        .where(eq(docInteractions.id, r.id));
     }
   }
 }
@@ -131,7 +195,12 @@ const themeIds = () => listThemes().map((t) => t.id);
  * `themeOf` is the doc's already-pinned theme (updates); null for creates.
  */
 function resolveAuthoring(
-  input: { html?: string; files?: InputFile[]; theme?: string; content?: string },
+  input: {
+    html?: string;
+    files?: InputFile[];
+    theme?: string;
+    content?: string;
+  },
   themeOf: string | null,
 ): { html?: string; theme: string | null; themeVersion: number | null } {
   const hasFiles = Array.isArray(input.files) && input.files.length > 0;
@@ -153,7 +222,11 @@ function resolveAuthoring(
         "A themed create needs non-empty `content` (the body HTML to wrap in the theme).",
         themeIds(),
       );
-    return { html: wrapWithTheme(input.content!, t.id), theme: t.id, themeVersion: t.version };
+    return {
+      html: wrapWithTheme(input.content!, t.id),
+      theme: t.id,
+      themeVersion: t.version,
+    };
   }
 
   // Content-only against a doc that already has a pinned theme → re-wrap.
@@ -165,7 +238,11 @@ function resolveAuthoring(
         themeIds(),
       );
     const t = getTheme(themeOf);
-    return { html: wrapWithTheme(input.content, t.id), theme: t.id, themeVersion: t.version };
+    return {
+      html: wrapWithTheme(input.content, t.id),
+      theme: t.id,
+      themeVersion: t.version,
+    };
   }
 
   // Raw html/files authoring — themeless (or leaves an existing pin untouched).
@@ -358,7 +435,10 @@ export async function updateDoc(input: UpdateDocInput): Promise<VersionResult> {
     // concurrent update_doc calls (no duplicate ordinal).
     const locked = (
       await tx
-        .select({ latestVersionId: docs.latestVersionId, ownerId: docs.ownerId })
+        .select({
+          latestVersionId: docs.latestVersionId,
+          ownerId: docs.ownerId,
+        })
         .from(docs)
         .where(eq(docs.id, doc.id))
         .for("update")
@@ -427,10 +507,13 @@ export async function updateDoc(input: UpdateDocInput): Promise<VersionResult> {
     return { versionId, ordinal };
   });
 
-  // P5: re-anchor comments against the new content.
+  // P5: re-anchor comments (and reader interactions) against the new content.
   if (!existing) {
     const html = htmlOf(ing);
-    if (html) await reanchorComments(doc.id, result.versionId, html);
+    if (html) {
+      await reanchorComments(doc.id, result.versionId, html);
+      await reanchorInteractions(doc.id, result.versionId, html);
+    }
   }
 
   return {
@@ -533,7 +616,9 @@ export async function deleteDoc(docId: string): Promise<boolean> {
       );
       orphanShas = candidateShas.filter((s) => !referenced.has(s));
       if (orphanShas.length > 0) {
-        await tx.delete(blobsTable).where(inArray(blobsTable.sha256, orphanShas));
+        await tx
+          .delete(blobsTable)
+          .where(inArray(blobsTable.sha256, orphanShas));
       }
     }
 

@@ -189,9 +189,22 @@ for the ✨ queue editors flagged for you), make the edits (prefer patch_doc for
 small changes), reply_to_comment with a one-line summary of what changed, then
 resolve_comment. The address_feedback prompt runs this end to end. For
 always-on watching beyond a chat session, the user runs you headless/scheduled
-to drain the queue.`;
+to drain the queue.
 
-const DEFAULT_AUDIENCE = "a sharp generalist who does not know this domain's jargon";
+4. Interactive controls — one-tap reader signals, separate from comments.
+Place <mg-control name="..."> elements in a doc to collect typed feedback a
+reader gives with a single tap (e.g. 👍/👎 per section:
+<mg-control type="reaction" name="sec-pricing"></mg-control>). Types: reaction
+(👍/👎), rating (max="5"), choice (values="a,b,c"), toggle, button
+(label="..."). Marigold renders and wires them; each reader's value persists
+last-write-wins and re-anchors across revisions. Read them with get_state
+(entries + per-control tallies) and get interaction.* events through
+get_feedback the moment a tap lands. Use comments for prose, controls for
+signals — e.g. reaction controls on each card of a recurring brief tell you
+what to include more (or less) of next edition.`;
+
+const DEFAULT_AUDIENCE =
+  "a sharp generalist who does not know this domain's jargon";
 
 // Research & learning posture — grounded in learning science: cognitive load
 // theory (Sweller), Mayer's multimedia principles, retrieval practice
@@ -659,7 +672,10 @@ export function buildAddressFeedbackPrompt(doc?: string): string {
 Work through every assigned comment before finishing.`;
 }
 
-export function buildStartAnalysisText(topic?: string, mode?: MarigoldMode): string {
+export function buildStartAnalysisText(
+  topic?: string,
+  mode?: MarigoldMode,
+): string {
   const parts = [MARIGOLD_WAY, DOC_GUIDE];
   if (mode && mode !== "analyze") {
     parts.push(MODE_POSTURES[mode], INTERACTIVE_INVARIANTS);

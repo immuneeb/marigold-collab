@@ -34,6 +34,7 @@ import {
   setCommentStatus,
 } from "@/lib/comments";
 import { emitDocEvent } from "@/lib/events";
+import { listInteractions } from "@/lib/interactions";
 import { sendInvite } from "@/lib/invite";
 import { verifyAccessToken } from "@/lib/oauth/tokens";
 import { upsertShare } from "@/lib/shares";
@@ -79,7 +80,9 @@ async function enrichEvents(
     ),
   ];
   const byId = new Map(
-    ids.length ? (await listComments(docId, { ids })).map((c) => [c.id, c]) : [],
+    ids.length
+      ? (await listComments(docId, { ids })).map((c) => [c.id, c])
+      : [],
   );
   return events.map((e) => {
     const commentId =
@@ -146,18 +149,25 @@ const baseHandler = createMcpHandler(
         description:
           "Analyze a concept, system, or decision the Marigold Way — first-principles decomposition, answer-first structure, load-bearing diagrams, three reading depths.",
         argsSchema: {
-          topic: z.string().describe("The concept, system, question, or decision to analyze"),
+          topic: z
+            .string()
+            .describe("The concept, system, question, or decision to analyze"),
           audience: z
             .string()
             .optional()
-            .describe("Who this is for (default: a sharp generalist new to the domain)"),
+            .describe(
+              "Who this is for (default: a sharp generalist new to the domain)",
+            ),
         },
       },
       ({ topic, audience }) => ({
         messages: [
           {
             role: "user" as const,
-            content: { type: "text" as const, text: buildAnalyzePrompt(topic, audience) },
+            content: {
+              type: "text" as const,
+              text: buildAnalyzePrompt(topic, audience),
+            },
           },
         ],
       }),
@@ -174,14 +184,19 @@ const baseHandler = createMcpHandler(
           audience: z
             .string()
             .optional()
-            .describe("Who is learning (default: a sharp generalist new to the domain)"),
+            .describe(
+              "Who is learning (default: a sharp generalist new to the domain)",
+            ),
         },
       },
       ({ topic, audience }) => ({
         messages: [
           {
             role: "user" as const,
-            content: { type: "text" as const, text: buildLearnPrompt(topic, audience) },
+            content: {
+              type: "text" as const,
+              text: buildLearnPrompt(topic, audience),
+            },
           },
         ],
       }),
@@ -197,14 +212,19 @@ const baseHandler = createMcpHandler(
           doc: z
             .string()
             .optional()
-            .describe("A specific doc (title, slug, or id); omit to sweep all docs"),
+            .describe(
+              "A specific doc (title, slug, or id); omit to sweep all docs",
+            ),
         },
       },
       ({ doc }) => ({
         messages: [
           {
             role: "user" as const,
-            content: { type: "text" as const, text: buildAddressFeedbackPrompt(doc) },
+            content: {
+              type: "text" as const,
+              text: buildAddressFeedbackPrompt(doc),
+            },
           },
         ],
       }),
@@ -217,9 +237,21 @@ const baseHandler = createMcpHandler(
         description:
           'Load the Marigold Way — the methodology for analyzing or teaching a topic from first principles. Call this FIRST when the user asks Marigold to analyze, explain, or teach something (e.g. "marigold analyze X", "/marigold learn Y"), then follow the returned method for the rest of the conversation. Pass mode to load the posture pack for what the session must produce; propose the matching mode when the ask obviously fits one ("this is a runbook — want do mode?").',
         inputSchema: {
-          topic: z.string().optional().describe("The topic to analyze or learn, if known"),
+          topic: z
+            .string()
+            .optional()
+            .describe("The topic to analyze or learn, if known"),
           mode: z
-            .enum(["analyze", "learn", "judge", "decide", "organize", "tune", "do", "track"])
+            .enum([
+              "analyze",
+              "learn",
+              "judge",
+              "decide",
+              "organize",
+              "tune",
+              "do",
+              "track",
+            ])
             .optional()
             .describe(
               "What the session must produce: analyze = first-principles breakdown (default); learn = a retained mental model; judge = verdicts on existing work; decide = a selection + rationale; organize = an arrangement of items; tune = parameter values; do = a completed procedure; track = an updated picture",
@@ -240,28 +272,41 @@ const baseHandler = createMcpHandler(
         description:
           "Create a new Marigold doc and return its URL. Two ways to author: (1) full-control — pass `html`, one self-contained page (inline all CSS/JS/SVG, data: URIs for images; external scripts, fonts, and images are blocked by CSP and fail silently). (2) themed — pass a `theme` id plus `content` (the body's inner HTML: your semantic <h1>/<p>/<table>/<svg>… with NO <style> or page scaffold), and the server wraps it in the theme's stylesheet into a self-contained page. Themed docs can be updated content-only (send `content`, not `html`) and raise the quality floor. Valid theme ids: " +
           THEME_IDS +
-          ". Lead with the core insight and carry the structure in a diagram (call start_analysis for the full authoring guide). After you share the returned URL, call get_feedback(docId) to WATCH for the reader's response and act on it in the same session — otherwise no one is listening and their comment just waits.",
+          ". Lead with the core insight and carry the structure in a diagram (call start_analysis for the full authoring guide). Docs can include one-tap feedback controls (<mg-control> — see get_state) for typed reader signals separate from comments. After you share the returned URL, call get_feedback(docId) to WATCH for the reader's response and act on it in the same session — otherwise no one is listening and their comment just waits.",
         inputSchema: {
           title: z.string().optional(),
           html: z
             .string()
             .optional()
-            .describe("Full self-contained HTML page. Omit when using theme + content."),
+            .describe(
+              "Full self-contained HTML page. Omit when using theme + content.",
+            ),
           theme: z
             .string()
             .optional()
-            .describe(`Built-in theme id to wrap content in. One of: ${THEME_IDS}.`),
+            .describe(
+              `Built-in theme id to wrap content in. One of: ${THEME_IDS}.`,
+            ),
           content: z
             .string()
             .optional()
-            .describe("Body inner HTML (semantic content only) — wrapped by `theme`."),
+            .describe(
+              "Body inner HTML (semantic content only) — wrapped by `theme`.",
+            ),
         },
       },
       async ({ title, html, theme, content }, extra: ToolExtra) => {
         const userId = userIdOf(extra);
         if (!userId) return fail("unauthenticated");
         try {
-          const r = await createDoc({ ownerId: userId, title, html, theme, content, assistant: "mcp" });
+          const r = await createDoc({
+            ownerId: userId,
+            title,
+            html,
+            theme,
+            content,
+            assistant: "mcp",
+          });
           // Feedback feed: the doc's first version is saved (feed genesis event).
           await emitDocEvent({
             docId: r.docId,
@@ -298,11 +343,15 @@ const baseHandler = createMcpHandler(
           html: z
             .string()
             .optional()
-            .describe("Full self-contained HTML page (full replace). Omit to send themed content."),
+            .describe(
+              "Full self-contained HTML page (full replace). Omit to send themed content.",
+            ),
           content: z
             .string()
             .optional()
-            .describe("Body inner HTML — re-wrapped in the doc's pinned theme (themed docs only)."),
+            .describe(
+              "Body inner HTML — re-wrapped in the doc's pinned theme (themed docs only).",
+            ),
           title: z.string().optional(),
         },
       },
@@ -313,7 +362,13 @@ const baseHandler = createMcpHandler(
         const { ok: allowed } = await authorize(docId, actor, "update");
         if (!allowed) return fail("not authorized to update this doc");
         try {
-          const r = await updateDoc({ docId, html, content, title, assistant: "mcp" });
+          const r = await updateDoc({
+            docId,
+            html,
+            content,
+            title,
+            assistant: "mcp",
+          });
           // Feedback feed: content was replaced (skip no-op writes).
           if (!r.unchanged)
             await emitDocEvent({
@@ -418,9 +473,7 @@ const baseHandler = createMcpHandler(
         // the public-doc viewer fallback) only see the published version.
         const canUpdate = !!role && roleCan(role, "update");
         const currentHtml = await currentHtmlOf(
-          canUpdate
-            ? doc.latestVersionId
-            : doc.publishedVersionId,
+          canUpdate ? doc.latestVersionId : doc.publishedVersionId,
           includeIds === true && canUpdate,
         );
         return ok({
@@ -465,7 +518,9 @@ const baseHandler = createMcpHandler(
         if (!allowed) return fail("not authorized to share this doc");
 
         if (email === undefined && makePublic === undefined)
-          return fail("provide an email to grant access, public to set link visibility, or both");
+          return fail(
+            "provide an email to grant access, public to set link visibility, or both",
+          );
 
         if (makePublic !== undefined) {
           await db
@@ -525,7 +580,7 @@ const baseHandler = createMcpHandler(
       {
         title: "Delete doc",
         description:
-          "Permanently delete a doc you own — the doc, every version, and all comments and shares are removed, and its URL stops working. This cannot be undone, so only call it when the human has explicitly asked to delete the doc (never to \"clean up\" on your own).",
+          'Permanently delete a doc you own — the doc, every version, and all comments and shares are removed, and its URL stops working. This cannot be undone, so only call it when the human has explicitly asked to delete the doc (never to "clean up" on your own).',
         inputSchema: { docId: z.string() },
       },
       async ({ docId }, extra: ToolExtra) => {
@@ -533,7 +588,8 @@ const baseHandler = createMcpHandler(
         if (!userId) return fail("unauthenticated");
         const actor = await actorForUserId(userId);
         const { ok: allowed } = await authorize(docId, actor, "delete");
-        if (!allowed) return fail("not authorized to delete this doc (owner only)");
+        if (!allowed)
+          return fail("not authorized to delete this doc (owner only)");
         const deleted = await deleteDoc(docId);
         if (!deleted) return fail("doc not found");
         return ok({ deleted: true, docId });
@@ -633,6 +689,63 @@ const baseHandler = createMcpHandler(
       },
     );
 
+    server.registerTool(
+      "get_state",
+      {
+        title: "Get interaction state (reader signals)",
+        description:
+          'Read the typed reader signals from a doc\'s interactive controls — 👍/👎 reactions, ratings, choices, toggles, button presses. Structured state kept SEPARATE from comments: each entry is the current value one reader has set on one named control (last-write-wins per reader; re-tapping the selected value clears it; element-anchored and re-anchored across revisions by control name, with orphaned=true when a control left the doc). Returns per-reader entries plus a per-control tally. To collect these signals, author <mg-control> elements into the doc HTML — e.g. <mg-control type="reaction" name="sec-pricing"></mg-control> for 👍/👎 on a section; types: reaction (or custom values="a,b"), rating (max="5"), choice (values="a,b,c"), toggle (label="..."), button (label="..." value="..."). Marigold renders + wires default UI (style via mg-control [data-mg-ui] / [data-mg-sel]); or supply your own child elements carrying data-mg-value for fully custom UI. Readers tap, values persist, and interaction.created/updated/cleared events also stream into get_feedback the moment a tap lands. Use reactions per card/section to tune recurring docs to what readers actually find useful.',
+        inputSchema: { docId: z.string() },
+      },
+      async ({ docId }, extra: ToolExtra) => {
+        const userId = userIdOf(extra);
+        if (!userId) return fail("unauthenticated");
+        const actor = await actorForUserId(userId);
+        const { ok: allowed } = await authorize(docId, actor, "view");
+        if (!allowed) return fail("not authorized to view this doc");
+
+        const rows = await listInteractions(docId);
+        const state = rows.map((r) => {
+          const a = (r.anchor ?? {}) as {
+            marigoldId?: string | null;
+            textQuote?: { exact?: string };
+          };
+          return {
+            name: r.name,
+            controlType: r.controlType,
+            value: r.value,
+            reader: r.readerName ?? "someone",
+            // Set by a quick-doc URL holder (no account) vs an account reader.
+            guest: r.guest,
+            marigoldId: a.marigoldId ?? null,
+            anchoredText: a.textQuote?.exact ?? null,
+            orphaned: r.orphaned,
+            updatedAt: r.updatedAt,
+          };
+        });
+        // Per-control tally so "3× up, 1× down on card-x" needs no client math.
+        const summary: Record<
+          string,
+          {
+            controlType: string;
+            readers: number;
+            values: Record<string, number>;
+          }
+        > = {};
+        for (const s of state) {
+          const g = (summary[s.name] ??= {
+            controlType: s.controlType,
+            readers: 0,
+            values: {},
+          });
+          g.readers += 1;
+          const key = String(s.value);
+          g.values[key] = (g.values[key] ?? 0) + 1;
+        }
+        return ok({ state, summary });
+      },
+    );
+
     // ── get_feedback (feedback-loop events feed) ──────────────────────────────
     // Keep this LAST so future tool additions and this one don't collide on the
     // same merge lines. Blocks until new activity lands on a doc, then returns
@@ -650,14 +763,18 @@ const baseHandler = createMcpHandler(
             .int()
             .min(0)
             .optional()
-            .describe("Cursor: return events with seq greater than this (default 0)"),
+            .describe(
+              "Cursor: return events with seq greater than this (default 0)",
+            ),
           waitSeconds: z
             .number()
             .int()
             .min(0)
             .max(50)
             .optional()
-            .describe("Max seconds to block waiting for activity (default 30, max 50)"),
+            .describe(
+              "Max seconds to block waiting for activity (default 30, max 50)",
+            ),
         },
       },
       async ({ docId, sinceSeq, waitSeconds }, extra: ToolExtra) => {
@@ -687,7 +804,7 @@ const baseHandler = createMcpHandler(
       {
         title: "Patch doc",
         description:
-          "Update a doc by sending ONLY the elements that changed, keyed by their data-marigold-id — much cheaper than update_doc for small edits (a few hundred tokens vs re-sending the whole page). Prefer this over update_doc whenever you're changing a handful of elements in an existing doc; use update_doc for a full rewrite or a brand-new page. Ops apply atomically (an unknown id fails the whole patch) and comments re-anchor as usual. ops is an array of: {op:\"replace\", marigoldId, html} (replace an element's inner content), {op:\"setText\", marigoldId, text} (replace text, auto-escaped), {op:\"append\", marigoldId, html} (insert markup right after the element), {op:\"remove\", marigoldId}. Example: [{\"op\":\"setText\",\"marigoldId\":\"mg-1a2b3c4d5e\",\"text\":\"Q3 revenue: $4.2M\"},{\"op\":\"append\",\"marigoldId\":\"mg-9f8e7d6c5b\",\"html\":\"<p>Updated 2026-07-07.</p>\"}].",
+          'Update a doc by sending ONLY the elements that changed, keyed by their data-marigold-id — much cheaper than update_doc for small edits (a few hundred tokens vs re-sending the whole page). Prefer this over update_doc whenever you\'re changing a handful of elements in an existing doc; use update_doc for a full rewrite or a brand-new page. Ops apply atomically (an unknown id fails the whole patch) and comments re-anchor as usual. ops is an array of: {op:"replace", marigoldId, html} (replace an element\'s inner content), {op:"setText", marigoldId, text} (replace text, auto-escaped), {op:"append", marigoldId, html} (insert markup right after the element), {op:"remove", marigoldId}. Example: [{"op":"setText","marigoldId":"mg-1a2b3c4d5e","text":"Q3 revenue: $4.2M"},{"op":"append","marigoldId":"mg-9f8e7d6c5b","html":"<p>Updated 2026-07-07.</p>"}].',
         inputSchema: {
           docId: z.string(),
           ops: z
