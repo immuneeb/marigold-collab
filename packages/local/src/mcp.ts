@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+import { buildStartAnalysisText } from "@marigold/core/principles";
 import { ensureServer, openBrowser, registerDoc, STATE_DIR } from "./client";
 
 const DRAFTS_DIR = join(STATE_DIR, "drafts");
@@ -45,12 +46,35 @@ the user's browser → get_feedback with waitSeconds to block until they hit
 comments re-anchor) → reply_to_comment + resolve_comment → get_feedback again
 for the next round. Drafts are plain HTML: full documents or fragments (and
 .svg), self-contained (external network is blocked by CSP, matching cloud
-Marigold).`;
+Marigold). Before authoring, call start_analysis (pass mode: analyze | learn |
+judge | decide | organize | tune | do | track — pick by what the session must
+produce) and follow the returned methodology + posture pack.`;
 
 export async function runMcp(): Promise<void> {
   const server = new McpServer(
     { name: "marigold-local", version: "0.1.0" },
     { instructions: DIGEST },
+  );
+
+  server.registerTool(
+    "start_analysis",
+    {
+      title: "Start a Marigold analysis",
+      description:
+        "Load the Marigold Way before authoring a draft — the first-principles method, doc structure guide, and a mode posture pack for what the session must produce. Call this FIRST when asked to analyze, explain, teach, or build an interactive draft, then follow the returned method.",
+      inputSchema: {
+        topic: z.string().optional().describe("The topic, if known"),
+        mode: z
+          .enum(["analyze", "learn", "judge", "decide", "organize", "tune", "do", "track"])
+          .optional()
+          .describe(
+            "What the session must produce: analyze = first-principles breakdown (default); learn = a retained mental model; judge = verdicts on existing work; decide = a selection + rationale; organize = an arrangement of items; tune = parameter values; do = a completed procedure; track = an updated picture",
+          ),
+      },
+    },
+    async ({ topic, mode }) => ({
+      content: [{ type: "text" as const, text: buildStartAnalysisText(topic, mode) }],
+    }),
   );
 
   server.registerTool(

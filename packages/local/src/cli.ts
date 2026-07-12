@@ -179,6 +179,19 @@ async function main(): Promise<void> {
       return;
     }
 
+    case "principles": {
+      // Print the Marigold authoring methodology (+ optional mode posture
+      // pack) so agents without MCP can load it before authoring a draft.
+      const { buildStartAnalysisText, MARIGOLD_MODES } = await import("@marigold/core/principles");
+      const [first, ...restWords] = positional;
+      const isMode = (s: string | undefined): s is (typeof MARIGOLD_MODES)[number] =>
+        !!s && (MARIGOLD_MODES as readonly string[]).includes(s);
+      const mode = isMode(first) ? first : undefined;
+      const topic = (mode ? restWords : positional).join(" ") || undefined;
+      process.stdout.write(buildStartAnalysisText(topic, mode) + "\n");
+      return;
+    }
+
     case "agent-setup": {
       const { runAgentSetup } = await import("./agent-setup");
       runAgentSetup();
@@ -289,6 +302,8 @@ async function main(): Promise<void> {
   reply <file> <id> <text…>   reply to a comment (badged AI)
   resolve|reopen <file> <id>  set a comment's status
   start | status | stop       manage the background server
+  principles [mode] [topic…]  print the Marigold authoring methodology + mode posture pack
+                              modes: analyze|learn|judge|decide|organize|tune|do|track
   mcp                         stdio MCP server (for Claude Desktop and other chat clients)
   agent-setup                 wire up Claude Code (skill) + Claude Desktop (MCP) on this machine`);
       if (cmd !== "help") process.exit(1);

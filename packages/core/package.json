@@ -9,7 +9,8 @@
     "./render": "./src/render.ts",
     "./blobs": "./src/blobs.ts",
     "./instrument": "./src/instrument.ts",
-    "./agent-src": "./src/agent-src.ts"
+    "./agent-src": "./src/agent-src.ts",
+    "./principles": "./src/principles.ts"
   },
   "scripts": {
     "keygen": "tsx src/scripts/keygen.ts",

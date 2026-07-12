@@ -215,13 +215,15 @@ const baseHandler = createMcpHandler(
       {
         title: "Start a Marigold analysis",
         description:
-          'Load the Marigold Way — the methodology for analyzing or teaching a topic from first principles. Call this FIRST when the user asks Marigold to analyze, explain, or teach something (e.g. "marigold analyze X", "/marigold learn Y"), then follow the returned method for the rest of the conversation.',
+          'Load the Marigold Way — the methodology for analyzing or teaching a topic from first principles. Call this FIRST when the user asks Marigold to analyze, explain, or teach something (e.g. "marigold analyze X", "/marigold learn Y"), then follow the returned method for the rest of the conversation. Pass mode to load the posture pack for what the session must produce; propose the matching mode when the ask obviously fits one ("this is a runbook — want do mode?").',
         inputSchema: {
           topic: z.string().optional().describe("The topic to analyze or learn, if known"),
           mode: z
-            .enum(["analyze", "learn"])
+            .enum(["analyze", "learn", "judge", "decide", "organize", "tune", "do", "track"])
             .optional()
-            .describe("analyze = first-principles breakdown; learn = progressive teaching"),
+            .describe(
+              "What the session must produce: analyze = first-principles breakdown (default); learn = a retained mental model; judge = verdicts on existing work; decide = a selection + rationale; organize = an arrangement of items; tune = parameter values; do = a completed procedure; track = an updated picture",
+            ),
         },
       },
       async ({ topic, mode }) => ({

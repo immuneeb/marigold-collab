@@ -162,7 +162,12 @@ export const MARIGOLD_DIGEST = `Marigold turns AI analysis into shareable, comme
 something ("marigold analyze X", "/marigold learn Y"), call the start_analysis
 tool first and follow the methodology it returns for the rest of the
 conversation — first-principles decomposition, answer-first structure,
-load-bearing diagrams, three reading depths.
+load-bearing diagrams, three reading depths. Pass mode to load the posture
+pack for what the session must produce: learn (a mental model) | judge
+(verdicts on work) | decide (a selection) | organize (an arrangement) | tune
+(parameter values) | do (a completed procedure) | track (an updated picture).
+Propose the matching mode when the user's ask obviously fits one ("this is a
+runbook — want Do mode?").
 
 2. Authoring docs: a doc is one self-contained HTML page. Inline all
 CSS/JS/SVG; images as data: URIs; external scripts, fonts, and images are
@@ -221,6 +226,399 @@ The goal is retention and transfer, not coverage:
 - Difficulty belongs in retrieval, never in perception or navigation: no
   gamification, no streaks or confetti, nothing hard to read or find.`;
 
+// Shared by every mode pack. Distilled from the cross-mode convergence in the
+// Jul 2026 research round (see Strategy & Roadmap/doc-mode-posture-packs.html
+// for sources): pre-annotation bias, Noise/anchoring, defaults research,
+// session-fatigue findings, and Fitts's-law interaction costs.
+export const INTERACTIVE_INVARIANTS = `# Interactive doc invariants
+
+Whatever the mode, an interactive Marigold doc obeys these rules:
+
+- The divergence is the product: the exit payload leads with the delta
+  between the AI's prior (pre-sort, recommendation, severity, default) and
+  the human's correction. Corrections are systematic, not random — a few of
+  them generalize into calibration for the next doc.
+- Reveal timing follows stakes: producing a verdict or a one-way selection →
+  the human records their take before the AI's is revealed; producing an
+  arrangement or a value → the AI's best guess leads and the human corrects.
+- No fake precision: no 1-10 scales, no decimal totals, no vibes-based
+  percentages, no dishonest progress bars. Coarse scales, comparison, and
+  explicit uncertainty everywhere.
+- Bound the session; deferral is first-class: batch caps, an always-available
+  "unsure / defer / park", and a partial session exits as valid data.
+- Cheap gestures, reversible always: keys and taps over drags, undo over
+  confirm dialogs, and human-placed state is sacred across revisions.
+- Structured exit: every widget session ends with a "Send to AI" affordance
+  that serializes the mode's exit payload (JSON in a comment assigned to AI)
+  so the authoring agent can act on it. A UI whose output the AI cannot read
+  is a dead end.`;
+
+// Judge posture — grounded in code-review research (Bacchelli & Bird 2013;
+// Sadowski et al. 2018; SmartBear/Cisco), judgment science (Kahneman's Noise,
+// mediating assessments, Thurstone comparative judgment), perspective-based
+// reading (Basili/NASA SEL), and critique culture (Braintrust, Conventional
+// Comments).
+const JUDGE_POSTURE = `# Judge posture
+
+The session produces verdicts on existing work. The doc segments, orients,
+and stages the AI's findings as a second opinion — never a first one:
+
+- Comprehension before verdict: open with orientation — what this artifact
+  is, what changed, what decision is being asked. Verdict controls stay
+  dormant until the section has been read.
+- State the bar in the masthead in one sentence ("Approve if net improvement
+  and no unresolved blockers"); verdict buttons are worded against it, never
+  affectively.
+- Segment into sign-off units judgeable in ~10 minutes, each with 3-7
+  artifact-specific, falsifiable checklist questions. Never one monolithic
+  scroll with a single verdict at the bottom; if the artifact is too big,
+  say so and split it.
+- Blind first pass: AI findings render as neutral location markers ("look
+  here"); the AI's severity and reasoning reveal only after the human
+  records their own take. Per-finding agreement/divergence is the
+  calibration signal.
+- Decompose the verdict: 3-6 mediating dimensions per section (correctness,
+  completeness, risk, reversibility...), scored separately; the global
+  verdict comes last, computed from unresolved blockers only.
+- No absolute scales: binary/ternary verdicts against a pinned standard,
+  pairwise comparison for ranking, exemplar anchors — never 1-10 or stars.
+- Typed findings with a blocking bit: issue / suggestion / question /
+  nitpick / praise, plus blocking yes/no. Only blockers gate. Problem and
+  suggested fix are separate fields; critique the work, never the author;
+  fixes are options, not mandates.
+- Queue mode (many items): one uniform card at a time, randomized order
+  (never sorted by prior score), 2-3 calibration exemplars up front, batches
+  of 15-25 with breaks, kill takes a one-tap reason chip, defer always
+  available.
+- No mid-session aggregates, streaks, or completion pressure; flag rushed
+  and post-cap verdicts in the payload instead of celebrating throughput.
+
+Structured exit: per-section dimension scores, typed findings with human
+disposition (agreed / disagreed / downgraded), the human-vs-AI divergence
+rate, pacing metadata (rushed and post-cap items), and follow-ups routed to
+the AI (fix / answer / investigate).`;
+
+// Decide posture — grounded in decision science (Nutt's alternatives study;
+// Dawes 1979; Kahneman/Lovallo/Sibony mediating assessments; Klein premortem;
+// swing weighting) and industry craft (Bezos type 1/2, ADRs, RAPID,
+// disagree-and-commit).
+const DECIDE_POSTURE = `# Decide posture
+
+The session produces a selection plus its rationale:
+
+- Refuse the whether-or-not shape: 3-5 real options, always including a
+  priced "do nothing / defer" baseline. Every option carries its steelman —
+  the strongest honest case, written as its champion would — plus the weight
+  vector under which it wins. Options that cannot win under any plausible
+  weighting are flagged dominated or dropped, never left as filler.
+- Classify the door first: the header declares reversibility class, cost and
+  time to reverse, deadline, and cost of delay. Two-way door → lightweight
+  matrix, AI recommendation leads, bias to decide. One-way door → full
+  treatment; the recommendation reveals only after the reader's own pass
+  through the criteria.
+- Criteria: 4-7, independent, operationally defined, each with an evidence
+  anchor; merge overlaps — double-counting silently multiplies weight.
+- Weights encode swing, not importance: weight the value of moving
+  worst→best within the actual option set; sliders show the real ranges;
+  low-swing criteria are visibly de-emphasized ("this row doesn't change the
+  ranking").
+- Coarse scores plus confidence per cell (1-5, evidence expandable); totals
+  shown to no more precision than the inputs justify.
+- Sensitivity is the product: mark flip thresholds on the slider tracks ("B
+  overtakes A past 35%"), show a robustness badge ("A wins under 78% of
+  reasonable weightings"), and render within-noise results as ties — saying
+  plainly that the matrix does not decide a tie, then handing off to the
+  pairwise picker.
+- Premortem the finalist: "It is 12 months later and this failed — why?"
+  pre-seeded with 3-5 failure modes, each convertible to a tripwire (metric
+  + threshold + revisit date).
+- One named human decider; the AI is the recommender; dissent is recorded
+  structurally ("I'd choose Y because..." + disagree-and-commit checkbox),
+  never erased.
+- ADR bones for the future reader: context, decision, consequences accepted,
+  "what would change our mind", and a status lifecycle (proposed → decided →
+  superseded). Deciding freezes the matrix; reopening is explicit and
+  logged.
+- Pairwise picker for tacit criteria (taste, tone): adaptive pair selection,
+  randomized sides, cycles surfaced conversationally — then reflect the
+  inferred criterion back ("you consistently chose the denser layouts — is
+  density the real criterion?") and offer it as a matrix row.
+
+Structured exit: selection + runner-up margin, per-criterion weights with
+their source (AI default / reader-adjusted), cell scores + confidence, the
+sensitivity verdict (robust, or the flip conditions), the dissent ledger,
+premortem tripwires, and whether the AI's recommendation was overridden.`;
+
+// Organize posture — grounded in pre-annotation bias research ("Bias in the
+// Loop"), GTD triage, card sorting / KJ affinity method, working-memory
+// limits (Cowan 2001), Fitts's law (MacKenzie et al.), and spatial-memory
+// research (Data Mountain).
+const ORGANIZE_POSTURE = `# Organize posture
+
+The session produces an arrangement of items; the diff against the AI's
+pre-sort is the product:
+
+- Correct, don't create: pre-place every item — never present an unsorted
+  pile — and make moving an item cost no more than confirming it. No
+  justification gates on moves; collect rationale after, and only for the
+  surprising deltas.
+- Every card carries a decision handle: one AI-written line — what this is,
+  plus the single fact that determines its placement. Never raw ticket or
+  email text.
+- Coarse then fine, one decision type per pass: pass 1 is a binary sweep
+  (keep/kill or confident/needs-review); pass 2 fine-places the survivors.
+  Never a five-way question on first contact; never
+  categorize-and-rank-and-schedule in one pass.
+- 3-5 buckets plus "Unsure", hard cap 7, each with a one-line inclusion rule
+  ("Goes here if..."). Human renames, merges, and added buckets are
+  first-class signal — the reader's real mental model.
+- Uncertainty must look uncertain: low-confidence placements render dashed
+  and float to the top as the review queue; the confident tail may offer
+  batch-accept but is marked unverified in the payload.
+- Warm up, then hard cases first: 2-3 unambiguous items teach the rubric,
+  then lowest-confidence items while attention is fresh.
+- Keys and taps beat drags: 1-5 sends the focused card to bucket N; drag is
+  reserved for genuinely spatial placement. Undo everywhere (toast +
+  Ctrl/Cmd-Z); confirm dialogs never.
+- Human-placed positions are sacred: no auto-tidy, no re-layout, stable
+  across revisions. Flat 2D canvases only, with concrete axis anchors ("an
+  afternoon ↔ a quarter"); boundary-straddling items auto-flag for review.
+- Bound the session: 20-50 decisions, visible n-of-N progress, parked items
+  become the pass-2 agenda. Never direct-rank more than ~15 items —
+  binary-split first, then rank the top tier, surfacing the AI's coin-flip
+  adjacent pairs as pairwise questions.
+- Timelines use discrete bins (weeks / sprints), never pixels: per-bin
+  capacity shown, over-stuffed near-term bins warn, and "Unscheduled" and
+  "Later" trays always exist.
+
+Structured exit: the final arrangement + the AI pre-sort + per-item deltas
+(with dwell time and gesture), a confusion matrix with detected systematic
+patterns ("you demoted every infra ticket I marked P1"), a rubber-stamp
+warning on uniform sub-second acceptance, schema edits, parked items as the
+next agenda, and a self-calibration note for the next pre-sort.`;
+
+// Tune posture — grounded in direct manipulation (Shneiderman), Bret Victor's
+// immediate-connection principle, parallel prototyping (Dow et al. 2010),
+// Design Galleries (Marks et al.), Scented Widgets (Willett et al.), defaults
+// research (Spool; Liu & Conrad), and inline-validation studies (Wroblewski).
+const TUNE_POSTURE = `# Tune posture
+
+The session produces parameter values:
+
+- The preview is the object: lead with a live rendering of the real artifact
+  at real size in real context, including the worst realistic case (the
+  longest title, the theme the product actually ships). Controls sit on or
+  beside the preview and update on input (<100ms, all client-side), never on
+  release.
+- Open on 3-5 dispersed candidates, not one candidate with sliders: presets
+  sampled for output diversity (six easings that feel different, not an even
+  grid), labeled by character ("settles softly", "playful overshoot"), never
+  by numbers. Sliders are phase two, entered by picking a candidate.
+- The default is the recommendation: every control initializes at the AI's
+  genuine pick with a one-line why beside it. A permanent "recommended" tick
+  stays on the track; delta-from-default stays visible. Unchanged is valid
+  acceptance — record it as weaker evidence than compared-and-kept.
+- Perceptually linear controls: OKLCH channels for color (gradient painted
+  on the track, gamut/contrast failures hatched), log scales for durations,
+  a draggable bezier editor for easing (with the real element animating),
+  modular-scale steppers for spacing. Equal drag = equal perceived change.
+- Scent the tracks: shade the recommended band, mark danger zones (WCAG
+  failures, durations that read as lag, blown budgets), tick standard values
+  (150/200/300ms, platform-standard easings).
+- 2-3 free parameters at once, max. Advanced values pre-set behind a
+  disclosure; correlated parameters merge into one composite control (a 2D
+  pad, a curve); the doc is a sequence of small decisions, not a panel of
+  twelve sliders.
+- Exploration is consequence-free: per-control reset (appears when dirty),
+  global reset, pin-a-waypoint (pinned states run side by side in a compare
+  strip), hold-to-compare against baseline, and sweep strips under primary
+  sliders (5-7 thumbnails sampling the range, click to jump).
+- Representative samples are load-bearing: tune against the worst realistic
+  case. If you cannot infer it, ask for real samples; if you must
+  synthesize, label them synthetic in the doc.
+- Forms validate on blur, never mid-typing; clear errors on keystroke once
+  flagged. Cross-field conflicts warn in plain language between the
+  implicated fields with a one-click fix; warnings (inadvisable) look
+  different from errors (impossible), and only errors block the exit.
+  Scenario presets set the whole form; deviations get badges;
+  derived-consequence readouts ("worst-case retry storm: 24 req/min") are
+  the form's live preview — mandatory.
+- Prompts tune against a locked panel of 3-5 representative samples
+  (typical, longest, edge, adversarial — each with a one-line
+  why-it's-here), all re-rendering on edit, diffs highlighted, budget meter
+  amber at 85%. One free-text surface at a time; tone/length knobs lift into
+  segmented controls.
+
+Structured exit: chosen values in canonical, directly-usable units
+(oklch(), cubic-bezier(), ms), touched vs untouched-accepted per control,
+visited-then-rejected presets and waypoints (the rejected region is the
+constraint boundary for future work), A/B verdicts, and constraint events
+with their resolutions.`;
+
+// Do posture — grounded in checklist human factors (Gawande; Degani & Wiener,
+// NASA CR-177549), do-nothing scripting (Slimmon), minimalist instruction
+// (Carroll), SRE runbook practice, and wizard/progress UX research (NN/g;
+// goal-gradient studies).
+const DO_POSTURE = `# Do posture
+
+The session produces a completed procedure; the doc is a verification
+system, not just instructions:
+
+- Gate before work (mise en place): every environmental assumption —
+  access, versions, permissions, backups — is a checkable prerequisite with
+  its own verify command and expected literal. "Begin" stays disabled until
+  each is confirmed or explicitly overridden with a reason. Confirmed
+  prereqs credit the progress meter.
+- One action per step, imperative voice, exact literals (verbatim command,
+  exact button label). If a step needs "and then", split it. Rationale
+  collapses behind "Why?" — never inline. Max ~7 steps per section; killer
+  items marked and re-asserted before any irreversible step.
+- Every step ends "You should see:" plus an exact literal. Killer items
+  confirm by forced choice among plausible observed outcomes ("Which did you
+  see? → BUILD SUCCESS / error TS... / something else") — never a bare
+  checkbox.
+- The doc holds the pointer: exactly one active step expanded, done steps
+  collapsed to one-line confirm summaries, state persisted (localStorage
+  keyed to doc + content hash) with a resume banner — "You were on 3.2, last
+  confirmed 14 min ago; re-verify before continuing?" On revision, migrate
+  state, don't reset it.
+- Branches are widgets, never prose conditionals: an observable question
+  with mutually exclusive answers, each showing its jump target and
+  step-count cost ("No → §4, adds ~4 steps"). The untaken path collapses but
+  survives; changing an answer marks downstream steps stale.
+- Every risky step carries "If this fails": the recognition literal, the
+  local fix or branch target, an idempotency badge (safe to retry, or not),
+  and the stop line — "if X, stop and escalate to Y; continuing makes it
+  worse."
+- A bail-out rail is always visible, never alarming: it renders a rollback
+  plan computed from what was actually done, in reverse order, each undo
+  step with its own verify literal, plus the escalation card. Aborting
+  emits the exit payload just like completing — aborted runs are the most
+  valuable revision data.
+- Command blocks: placeholders are editable chips that propagate doc-wide
+  and persist; copy is blocked while chips are unfilled; expected output is
+  visually distinct from the command; secrets are masked and never
+  persisted.
+- Honest progress: steps remaining, never percentages; near the end, name
+  the proximity ("2 steps left"). Provide READ-DO detail plus DO-CONFIRM
+  section recaps of killer items; a condensed confirm mode serves repeat
+  performers.
+- Definition of done is the completion call: 3-6 verifiable assertions, each
+  with its own check and expected literal, re-asserting any value that could
+  have drifted; completion emits a paste-ready summary (what was done,
+  branch path, duration, deviations).
+
+Structured exit: per-step outcomes (done / failed / skipped / overridden,
+with observed literal, dwell, retries), edited-command diffs and manual
+workarounds (the doer patching the runbook live — revision starts there),
+branch answers, failure points with pasted errors, rollback invocations, and
+definition-of-done results. Deviations are the revision signal.`;
+
+// Track posture — grounded in change-blindness research (Rensink; Simons &
+// Levin), Wheeler's control charts, Amazon's WBR discipline, Few/Tufte
+// dashboard craft, blameless postmortems (Google SRE; Etsy; Howie), and
+// alarm-fatigue studies.
+const TRACK_POSTURE = `# Track posture
+
+The session produces an updated picture; the reader is change-blind, and the
+report must never become a false-alarm generator:
+
+- Delta first: open with a what-changed banner keyed to this reader's
+  last-seen version — state transitions (new exception, status flip,
+  incident resolved, decision made, your question answered), never text
+  edits. Changed sections carry in-place markers that clear on
+  acknowledgment; first-time readers get "how to read this doc" instead.
+  (Until platform read-tracking exists, approximate with a "changes since ▾"
+  version picker plus per-browser localStorage.)
+- Signal before narrative: compute natural process limits per metric over
+  the trailing window; only limit breaches and run-rule hits become
+  exceptions with narrative. In-band movement renders muted and labeled
+  routine. A lone "up 12% week-over-week" headline is banned output.
+- Exceptions above the fold, ranked, ~5 visible; healthy metrics compress
+  into a muted grid; the doc's length correlates with trouble. Chronic
+  exceptions (present ≥3 versions) demote to a known-issues strip and stop
+  consuming red budget.
+- One-viewport overview, ~8 tiles max, each justified in one sentence —
+  golden signals / RED / USE for services, controllable input→output pairs
+  for business reviews. Inputs get the narrative and the actions; outputs
+  without paired inputs are flagged as a modeling gap.
+- Freeze the format: tile order, chart types, and colors are invariant
+  across versions — anomaly-spotting "fingertip feel" needs a constant
+  background, and a stable DOM re-anchors comments. New metrics append,
+  flagged.
+- Tile anatomy: a takeaway title stated as an assertion ("Checkout latency
+  back inside band"), value + as-of timestamp, bullet bar vs target, trend
+  arrow colored by good/bad (not up/down), sparkline with the limit band
+  shaded and event markers ticked, and a fixed box score (WoW / YoY / vs
+  plan — the same three on every tile).
+- Status is a struct: state + trend + confidence + evidence anchor. No green
+  without linked evidence; green with degrading leading indicators renders
+  "green ↘ (watch)". Amber must exist on the way to red.
+- Variance narrative in five fields: we said / we did / variance / why /
+  what now. "Under investigation" is a legitimate why; confabulating a cause
+  to fill the slot is forbidden — emit a routed question to the owner
+  instead.
+- Incidents: one-line summary + impact numbers → visual timeline (absolute
+  and T+ times, entries sharing event IDs with chart markers) → 2-5 systemic
+  contributing factors (roles, never names; never one "root cause") → what
+  went well → action items with owner/due/status that persist in later
+  versions until closed.
+- Emphasis is a budget: at most ~3 red-tier flags per version; a fourth red
+  must demote one. Every chart carries deploy/config/incident event markers;
+  every narrated anomaly is annotated in-chart at the exact point.
+
+Structured exit: per-reader acknowledgments (clear markers; unacknowledged
+reds re-escalate), severity disagreements in both directions, questions
+routed to the AI with desired-by dates, decision responses (approve / reject
+/ defer), corrections ("this number is wrong" → disputed chip until
+resolved), confidence votes on status chips, and next-version directives
+(add / retire / split metrics).`;
+
+// The seven doc modes: what the session must produce selects the posture.
+// Taxonomy + research: Strategy & Roadmap/doc-mode-posture-packs.html and
+// the Linear "Marigold" project (MUN-25).
+export type MarigoldMode =
+  | "analyze"
+  | "learn"
+  | "judge"
+  | "decide"
+  | "organize"
+  | "tune"
+  | "do"
+  | "track";
+
+export const MARIGOLD_MODES = [
+  "analyze",
+  "learn",
+  "judge",
+  "decide",
+  "organize",
+  "tune",
+  "do",
+  "track",
+] as const;
+
+const MODE_POSTURES: Record<Exclude<MarigoldMode, "analyze">, string> = {
+  learn: LEARN_POSTURE,
+  judge: JUDGE_POSTURE,
+  decide: DECIDE_POSTURE,
+  organize: ORGANIZE_POSTURE,
+  tune: TUNE_POSTURE,
+  do: DO_POSTURE,
+  track: TRACK_POSTURE,
+};
+
+export const MODE_ONE_LINERS: Record<MarigoldMode, string> = {
+  analyze: "first-principles breakdown (the generalist default)",
+  learn: "the reader builds and retains a mental model",
+  judge: "the reader renders verdicts on existing work",
+  decide: "the reader makes a selection with rationale",
+  organize: "the reader arranges items (triage, rank, schedule)",
+  tune: "the reader settles parameter values against live previews",
+  do: "the reader completes a real-world procedure",
+  track: "the reader updates their picture of evolving state",
+};
+
 export function buildAnalyzePrompt(topic: string, audience?: string): string {
   return [
     MARIGOLD_WAY,
@@ -236,6 +634,7 @@ export function buildLearnPrompt(topic: string, audience?: string): string {
     MARIGOLD_WAY,
     DOC_GUIDE,
     LEARN_POSTURE,
+    INTERACTIVE_INVARIANTS,
     "---",
     `Teach me the following topic the Marigold Way. Audience: ${audience ?? DEFAULT_AUDIENCE}.`,
     `Topic: ${topic}`,
@@ -260,9 +659,11 @@ export function buildAddressFeedbackPrompt(doc?: string): string {
 Work through every assigned comment before finishing.`;
 }
 
-export function buildStartAnalysisText(topic?: string, mode?: "analyze" | "learn"): string {
+export function buildStartAnalysisText(topic?: string, mode?: MarigoldMode): string {
   const parts = [MARIGOLD_WAY, DOC_GUIDE];
-  if (mode === "learn") parts.push(LEARN_POSTURE);
+  if (mode && mode !== "analyze") {
+    parts.push(MODE_POSTURES[mode], INTERACTIVE_INVARIANTS);
+  }
   if (topic) {
     parts.push(
       "---",

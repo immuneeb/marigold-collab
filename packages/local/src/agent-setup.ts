@@ -62,7 +62,13 @@ monitor.
 
 ## The loop
 
-1. **Author the draft.** Write a self-contained HTML file (full document, or a
+1. **Author the draft.** First run
+   \`marigold-draft principles [mode]\` and follow the returned methodology +
+   posture pack — pick the mode by what the session must produce: \`learn\`
+   (a mental model) · \`judge\` (verdicts on work) · \`decide\` (a selection) ·
+   \`organize\` (an arrangement) · \`tune\` (parameter values) · \`do\` (a
+   completed procedure) · \`track\` (an updated picture) · \`analyze\` (default).
+   Then write a self-contained HTML file (full document, or a
    fragment/SVG — those get a neutral wrapper automatically). External
    scripts/fonts/images are blocked by CSP (matching cloud Marigold), so inline
    everything; images as \`data:\` URIs. Keep drafts the user will iterate on in
@@ -115,7 +121,8 @@ When asked to "spin up marigold draft" (or for a local commentable draft):
    \`marigold-draft listen\` under it once — each user "Send feedback to agent"
    prints one JSON review round on stdout and wakes you. Then open drafts with
    \`marigold-draft open <file> --no-wait\`.
-2. Otherwise: write the self-contained HTML file (inline all CSS/JS/SVG), run
+2. Otherwise: run \`marigold-draft principles [mode]\` and follow it to write
+   the self-contained HTML file (inline all CSS/JS/SVG), then run
    \`marigold-draft open <file> --json --timeout 570\` in the background — it
    opens the browser, blocks until "Send feedback to agent", prints the
    feedback JSON, exits (code 2 = timed out; re-arm).
