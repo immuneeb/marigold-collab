@@ -1,6 +1,6 @@
 import { createMcpHandler, withMcpAuth } from "mcp-handler";
 import { z } from "zod";
-import { and, desc, eq, ne, sql } from "drizzle-orm";
+import { and, eq, inArray, ne, sql } from "drizzle-orm";
 import {
   applyPatchOps,
   authorize,
@@ -25,7 +25,7 @@ import {
   updateDoc,
   waitForEvents,
 } from "@marigold/core";
-import { comments, db, docs } from "@marigold/db";
+import { comments, db, docs, shares } from "@marigold/db";
 import { actorForUserId } from "@/lib/actor";
 import {
   getComment,
@@ -343,38 +343,79 @@ const baseHandler = createMcpHandler(
       {
         title: "List docs",
         description:
-          "List the docs you own. openAiComments counts unresolved comments editors have assigned to AI — if it's > 0, that doc has feedback waiting for you (get_comments with assignedToAi: true).",
+          "List the docs you can work on: docs you own plus docs shared with you (active grants on your verified emails). Each entry's `role` is your role on that doc — owner | editor | commenter | viewer. openAiComments counts unresolved comments editors have assigned to AI — if it's > 0, that doc has feedback waiting for you (get_comments with assignedToAi: true).",
         inputSchema: {},
       },
       async (_args, extra: ToolExtra) => {
         const userId = userIdOf(extra);
         if (!userId) return fail("unauthenticated");
-        const rows = await db
-          .select({
-            docId: docs.id,
-            slug: docs.slug,
-            title: docs.title,
-            url: docs.slug,
-            public: docs.isPublic,
-            theme: docs.theme,
-            themeVersion: docs.themeVersion,
-            createdAt: docs.createdAt,
-          })
+        const docFields = {
+          docId: docs.id,
+          slug: docs.slug,
+          title: docs.title,
+          public: docs.isPublic,
+          theme: docs.theme,
+          themeVersion: docs.themeVersion,
+          createdAt: docs.createdAt,
+        };
+        const owned = await db
+          .select(docFields)
           .from(docs)
-          .where(eq(docs.ownerId, userId))
-          .orderBy(desc(docs.createdAt));
-        const counts = await db
-          .select({ docId: comments.docId, n: sql<number>`count(*)::int` })
-          .from(comments)
-          .innerJoin(docs, eq(comments.docId, docs.id))
-          .where(
-            and(
-              eq(docs.ownerId, userId),
-              eq(comments.assignedToAi, true),
-              ne(comments.status, "resolved"),
-            ),
-          )
-          .groupBy(comments.docId);
+          .where(eq(docs.ownerId, userId));
+        // Shared-with-me mirrors resolveRole (packages/core/src/acl.ts): only
+        // ACTIVE grants bound to the caller's verified emails count, and
+        // quarantined docs are invisible to non-owners.
+        const { verifiedEmails } = await actorForUserId(userId);
+        const granted =
+          verifiedEmails.length > 0
+            ? await db
+                .select({ ...docFields, role: shares.role })
+                .from(shares)
+                .innerJoin(docs, eq(shares.docId, docs.id))
+                .where(
+                  and(
+                    inArray(shares.email, verifiedEmails),
+                    eq(shares.state, "active"),
+                    eq(docs.quarantined, false),
+                  ),
+                )
+            : [];
+        // Dedupe by docId, keeping the caller's strongest role.
+        const rank = { owner: 3, editor: 2, commenter: 1, viewer: 0 } as const;
+        type Listed = (typeof owned)[number] & { role: keyof typeof rank };
+        const byId = new Map<string, Listed>();
+        for (const r of owned) byId.set(r.docId, { ...r, role: "owner" });
+        for (const r of granted) {
+          const role = (
+            r.role in rank ? r.role : "viewer"
+          ) as keyof typeof rank;
+          const prev = byId.get(r.docId);
+          if (!prev || rank[role] > rank[prev.role])
+            byId.set(r.docId, { ...r, role });
+        }
+        const rows = [...byId.values()].sort(
+          (a, b) => b.createdAt.getTime() - a.createdAt.getTime(),
+        );
+        const counts =
+          rows.length > 0
+            ? await db
+                .select({
+                  docId: comments.docId,
+                  n: sql<number>`count(*)::int`,
+                })
+                .from(comments)
+                .where(
+                  and(
+                    inArray(
+                      comments.docId,
+                      rows.map((r) => r.docId),
+                    ),
+                    eq(comments.assignedToAi, true),
+                    ne(comments.status, "resolved"),
+                  ),
+                )
+                .groupBy(comments.docId)
+            : [];
         const aiByDoc = new Map(counts.map((c) => [c.docId, c.n]));
         return ok({
           docs: rows.map((r) => ({
