@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AccessPanel } from "./access-panel";
 
 interface Anchor {
   marigoldId?: string | null;
@@ -603,6 +604,9 @@ export function ViewerClient(props: {
             >
               Source
             </Link>
+          )}
+          {props.isOwner && (
+            <AccessPanel docId={props.docId} slug={props.slug} />
           )}
           {props.isOwner && (
             <Link href={`/d/${props.slug}/manage`} className="btn-ghost">

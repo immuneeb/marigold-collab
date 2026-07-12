@@ -13,7 +13,10 @@ import { db, docs } from "@marigold/db";
 import { currentActor } from "@/lib/actor";
 import { emitDocEvent } from "@/lib/events";
 import { json } from "@/lib/http";
-import { quickKeyGrants, requestQuickKey } from "@/lib/quick";
+import {
+  recheckDocWriteAccess,
+  resolveDocWriteAccess,
+} from "@/lib/key-access";
 
 export const runtime = "nodejs";
 
@@ -53,19 +56,11 @@ export async function GET(_req: Request, { params }: Params) {
 export async function PATCH(req: Request, { params }: Params) {
   const { id } = await params;
   const actor = await currentActor();
-  const { ok } = await authorize(id, actor, "update");
-  // Additive quick-doc branch: a valid key on a live unclaimed doc may rename
-  // and update (the viewer sends it as X-Marigold-Key). Owned docs never
-  // reach this — their key hash is burned.
-  let quick = false;
-  if (!ok) {
-    const doc = (
-      await db.select().from(docs).where(eq(docs.id, id)).limit(1)
-    )[0];
-    quick =
-      !!doc && !doc.quarantined && quickKeyGrants(doc, requestQuickKey(req));
-    if (!quick) return json(actor.userId ? 403 : 401, { error: "forbidden" });
-  }
+  // Session ACL, else a quick key on a live unclaimed doc, else a minted agent
+  // key on an owned doc (attenuated to min(minter's current role, roleCap)).
+  const access = await resolveDocWriteAccess(req, id, actor, "update");
+  if (access.mode === "denied") return access.response;
+  const quick = access.mode === "quick";
 
   let body: { title?: string; html?: string; files?: unknown };
   try {
@@ -74,18 +69,11 @@ export async function PATCH(req: Request, { params }: Params) {
     return json(400, { error: "invalid_json" });
   }
 
-  // A quick-key caller must still hold a live grant now that the body has
-  // arrived — the doc may have been claimed (key burned) while it uploaded.
-  if (quick) {
-    const fresh = (
-      await db.select().from(docs).where(eq(docs.id, id)).limit(1)
-    )[0];
-    if (!fresh || !quickKeyGrants(fresh, requestQuickKey(req)))
-      return json(403, {
-        error: "claimed",
-        hint: "The doc was claimed; the quick key no longer grants access.",
-      });
-  }
+  // A key-authed caller must still hold a live grant now that the body has
+  // arrived — the doc may have been claimed (quick key burned) or the agent
+  // key revoked while it uploaded.
+  const recheck = await recheckDocWriteAccess(req, id, access);
+  if (recheck) return recheck;
 
   const extendQuickExpiry = async () => {
     // Rolling expiry: a successful unclaimed write buys another 30 days.
@@ -97,6 +85,13 @@ export async function PATCH(req: Request, { params }: Params) {
         .where(and(eq(docs.id, id), isNull(docs.ownerId)));
     }
   };
+
+  const eventActor =
+    access.mode === "agent"
+      ? access.minterUserId
+      : quick
+        ? null
+        : actor.userId;
 
   // Title-only rename: metadata change, no new version.
   if (body.html === undefined && body.files === undefined) {
@@ -122,8 +117,12 @@ export async function PATCH(req: Request, { params }: Params) {
       await emitDocEvent({
         docId: id,
         type: "content.replaced",
-        actor: quick ? null : actor.userId,
-        payload: { versionId: result.versionId, ordinal: result.ordinal },
+        actor: eventActor,
+        payload: {
+          versionId: result.versionId,
+          ordinal: result.ordinal,
+          ...(access.mode === "agent" ? { agentKey: access.label } : {}),
+        },
       });
     return json(200, result);
   } catch (e) {
@@ -138,13 +137,17 @@ export async function PATCH(req: Request, { params }: Params) {
   }
 }
 
-// Permanent, owner-only (the "delete" capability). Cascades to versions,
+// Permanent delete (the "delete" capability). Session path is owner-only;
+// additionally (MUN-67) a live quick key on an unclaimed, unexpired,
+// unquarantined doc may delete — the ?k= URL is that draft's full edit
+// capability, disposal included. Agent keys can never delete: their cap tops
+// out at editor and roleCan(editor, "delete") is false. Cascades to versions,
 // comments, shares, and network grants; purges blobs no other doc references.
-export async function DELETE(_req: Request, { params }: Params) {
+export async function DELETE(req: Request, { params }: Params) {
   const { id } = await params;
   const actor = await currentActor();
-  const { ok } = await authorize(id, actor, "delete");
-  if (!ok) return json(actor.userId ? 403 : 401, { error: "forbidden" });
+  const access = await resolveDocWriteAccess(req, id, actor, "delete");
+  if (access.mode === "denied") return access.response;
 
   const deleted = await deleteDoc(id);
   if (!deleted) return json(404, { error: "not_found" });

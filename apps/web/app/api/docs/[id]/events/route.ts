@@ -1,8 +1,9 @@
 import { eq } from "drizzle-orm";
-import { authorize, headSeq, waitForEvents } from "@marigold/core";
+import { authorize, headSeq, touchAgentKey, waitForEvents } from "@marigold/core";
 import { db, docs } from "@marigold/db";
 import { currentActor } from "@/lib/actor";
 import { json } from "@/lib/http";
+import { resolveAgentKeyAuth } from "@/lib/key-access";
 import { quickAccess, requestQuickKey } from "@/lib/quick";
 
 export const runtime = "nodejs";
@@ -33,19 +34,31 @@ export async function GET(req: Request, { params }: Params) {
       hint: "This doc has been quarantined by an administrator.",
     });
 
-  // Auth: a live quick key grants view; otherwise fall back to the account ACL.
+  // Auth: a live quick key grants view; on owned docs a minted agent key does
+  // too (every attenuated role can at least view — MUN-74, the post-claim
+  // feedback loop); otherwise fall back to the account ACL.
   const key = requestQuickKey(req);
   const access = quickAccess(doc, key);
   if (access !== "granted") {
-    const actor = await currentActor();
-    const { ok } = await authorize(id, actor, "view");
-    if (!ok) {
-      if (key && access === "expired")
-        return json(410, { error: "expired" });
-      if (key && access === "claimed")
-        return json(403, { error: "claimed" });
-      if (key) return json(401, { error: "invalid_key" });
-      return json(actor.userId ? 403 : 401, { error: "forbidden" });
+    let agentGranted = false;
+    if (doc.ownerId && key && access === "claimed") {
+      const agent = await resolveAgentKeyAuth(id, key);
+      if (agent) {
+        void touchAgentKey(agent.keyId);
+        agentGranted = true;
+      }
+    }
+    if (!agentGranted) {
+      const actor = await currentActor();
+      const { ok } = await authorize(id, actor, "view");
+      if (!ok) {
+        if (key && access === "expired")
+          return json(410, { error: "expired" });
+        if (key && access === "claimed")
+          return json(403, { error: "claimed" });
+        if (key) return json(401, { error: "invalid_key" });
+        return json(actor.userId ? 403 : 401, { error: "forbidden" });
+      }
     }
   }
 
