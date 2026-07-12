@@ -35,6 +35,8 @@ POST /api/docs/:docId/claim  (signed-in + key) ──► claimed doc
                         · joins the account: private, email-based sharing
                         · expiry cleared, key BURNED — the old ?k= URL and
                           X-Marigold-Key stop granting anything, permanently
+                        · continuity: the owner mints an AGENT KEY (below) so
+                          you keep editing over the same API after the claim
 ```
 
 Claiming is the graduation path: keep a doc long-term or control access
@@ -42,8 +44,8 @@ tightly by claiming it; until then the URL is the only capability.
 
 ## Authentication
 
-Quick-doc requests authenticate with the `editKey` returned at creation,
-passed either way:
+Quick-doc requests authenticate with the `editKey` returned at creation;
+claimed docs accept a minted agent key the same way. Either transport:
 
 ```
 ?k=<key>                      # query parameter
@@ -117,9 +119,9 @@ patch (below). `?k=<key>` and the `X-Marigold-Key` header are interchangeable.
 
 ### Replace content
 
-`PUT /api/docs/:docId/content` — quick key only, unclaimed + unexpired docs.
-Full-page replacement; versioning and comment re-anchoring run as normal.
-Body: `{ "html": string, "title"?: string }`.
+`PUT /api/docs/:docId/content` — quick key (unclaimed + unexpired docs) or an
+update-capable agent key (claimed docs). Full-page replacement; versioning and
+comment re-anchoring run as normal. Body: `{ "html": string, "title"?: string }`.
 
 ```sh
 curl -s -X PUT "https://marigold-collab-web.vercel.app/api/docs/doc_…/content" \
@@ -131,12 +133,13 @@ curl -s -X PUT "https://marigold-collab-web.vercel.app/api/docs/doc_…/content"
 `200`: `{ "versionId": "ver_…", "ordinal": 4, "unchanged": false, "expiresAt": "…" }`
 
 `unchanged: true` means the content was byte-identical — no new version. Each
-successful write renews the 30-day expiry. Once a doc is claimed, PUT returns
-`403 claimed` — the owner edits through their account (MCP or dashboard).
+successful unclaimed write renews the 30-day expiry. Once a doc is claimed, the
+burned quick key gets `403 claimed` — continue with a minted agent key (below),
+or the owner edits through their account (MCP or dashboard).
 
 ### Patch content (cheap updates)
 
-`POST /api/docs/:docId/patch` — quick key only. Change **only** the elements
+`POST /api/docs/:docId/patch` — same keys as PUT. Change **only** the elements
 that moved, keyed by their `data-marigold-id` (from `GET …/content?includeIds=1`),
 instead of re-sending the whole page. Much cheaper than a full replace on a big
 doc — the payload is the change, not the document. Body:
@@ -195,6 +198,36 @@ sign-in and confirms. `200`:
 
 The doc becomes a standard private owned doc; the key is burned; expiry is
 cleared. Claiming also rescues an expired doc that hasn't been purged yet.
+
+### Agent keys (post-claim continuity)
+
+Claimed docs accept **minted agent keys**: doc-scoped, role-capped, labeled,
+individually revocable bearer keys, sent exactly like a quick key (`?k=` /
+`X-Marigold-Key`). The claim page offers to mint one ("Keep your agent editing
+this doc"); owners and grantees can also mint via the API. A key's effective
+role is always `min(minter's current role, roleCap)`, recomputed on every
+request — revoke the minter's grant and their keys die with it. Keys never
+confer `owner`.
+
+- `POST /api/docs/:docId/agent-keys` (signed-in; owner or grantee). Body:
+  `{ "label": "my agent", "roleCap": "viewer"|"commenter"|"editor" }` →
+  `200 { "id", "key", "label", "roleCap" }`. **`key` is shown once** — store it.
+  Max 20 live keys per doc.
+- `GET /api/docs/:docId/agent-keys` (signed-in) — owner lists all, a minter
+  their own: `{ "keys": [{ id, label, roleCap, minter, createdAt, revokedAt,
+  lastUsedAt }] }` (never the secret).
+- `DELETE /api/docs/:docId/agent-keys/:keyId` (signed-in; owner revokes any,
+  minter their own) → `{ "ok": true }`.
+
+An editor-capped key can `GET`/`PUT …/content`, `POST …/patch`, and watch
+`GET …/events`; viewer/commenter caps read only. Commenting with a minted key
+is not supported yet. A revoked key answers `403 key_revoked`.
+
+### Delete an unclaimed doc
+
+`DELETE /api/docs/:docId` — with the quick key (unclaimed + unexpired docs),
+the URL holder can dispose of a draft entirely: doc, versions, comments.
+Permanent. On claimed docs, delete stays owner-only (agent keys can't delete).
 
 ### Viewer
 

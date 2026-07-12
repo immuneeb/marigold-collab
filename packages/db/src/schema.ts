@@ -289,3 +289,47 @@ export const docEvents = pgTable(
     uniqueIndex("doc_events_doc_seq_uq").on(t.docId, t.seq),
   ],
 );
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Doc-scoped agent keys (MUN-74) — identity-anchored delegation over plain HTTP.
+// A key is minted by an owner/grantee, capped at a role, labeled for
+// attribution, and individually revocable. Only the sha256 is stored; the
+// bearer secret is shown once at mint. Attenuation is computed at auth time:
+// effective role = min(minter's CURRENT role, roleCap) — so revoking the
+// minter's grant kills their keys with it.
+export const agentKeys = pgTable(
+  "agent_keys",
+  {
+    id: text("id").primaryKey(), // "akey_..."
+    docId: text("doc_id")
+      .notNull()
+      .references(() => docs.id, { onDelete: "cascade" }),
+    minterUserId: text("minter_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    roleCap: text("role_cap").notNull(), // 'viewer' | 'commenter' | 'editor'
+    label: text("label").notNull(), // agent name shown in attribution, e.g. "bench-bot"
+    keyHash: text("key_hash").notNull(), // sha256 of the bearer secret
+    createdAt: createdAt(),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("agent_keys_doc_idx").on(t.docId),
+    uniqueIndex("agent_keys_key_hash_uq").on(t.keyHash),
+  ],
+);
+
+// Magic-link sign-in tokens (MUN-77): single-use, short-TTL, stored hashed —
+// same custody rule as every other bearer secret in the schema.
+export const loginTokens = pgTable(
+  "login_tokens",
+  {
+    tokenHash: text("token_hash").primaryKey(), // sha256 of the emailed token
+    email: text("email").notNull(), // normalized target address
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    consumedAt: timestamp("consumed_at", { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [index("login_tokens_email_idx").on(t.email)],
+);
