@@ -57,6 +57,16 @@ export function ViewerClient(props: {
   useEffect(() => {
     setOpen((o) => (o === null ? !window.matchMedia(MOBILE_MQ).matches : o));
   }, []);
+  // Touch device: the empty-state hint says "tap" instead of "hover/click", so
+  // it never advertises a gesture that doesn't exist on a touchscreen.
+  const [coarse, setCoarse] = useState(false);
+  useEffect(() => {
+    try {
+      setCoarse(window.matchMedia("(pointer: coarse)").matches);
+    } catch {
+      /* matchMedia unavailable — default to the desktop wording */
+    }
+  }, []);
   const [showResolved, setShowResolved] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   // Auto-save machinery: edits stream in from the agent, get queued, and flush
@@ -780,7 +790,7 @@ export function ViewerClient(props: {
             {openRoots.length === 0 && resolvedRoots.length === 0 && !draft && (
               <p className="muted small cmt-empty">
                 {canComment
-                  ? `Select text and hit the 💬+ button to comment.${props.canEdit ? " Click text to edit it — changes save automatically. Hover an element for move / duplicate / add / delete." : ""} Press ? for keyboard shortcuts.`
+                  ? `Select text and hit the 💬+ button to comment.${props.canEdit ? ` ${coarse ? "Tap" : "Click"} text to edit it — changes save automatically. ${coarse ? "Tap" : "Hover"} an element for move / duplicate / add / delete.` : ""} Press ? for keyboard shortcuts.`
                   : "No comments yet."}
               </p>
             )}
