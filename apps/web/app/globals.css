@@ -1167,3 +1167,58 @@ kbd {
   border-radius: 6px;
   padding: 4px 6px;
 }
+
+/* signed-out browser quick-start (MUN-76): landing CTA + /new success card */
+.quickstart-cta-row {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-top: 14px;
+}
+.quickstart-cta-row .btn,
+.quickstart-cta-row .btn-secondary {
+  width: auto;
+  margin-top: 0;
+  padding: 12px 24px;
+}
+.quickstart-cta-note {
+  margin: 12px 0 0;
+}
+.quickstart-success {
+  margin-top: 20px;
+  padding: 28px 24px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--card);
+}
+.quickstart-success h2 {
+  margin: 0 0 12px;
+  font-size: 18px;
+  letter-spacing: -0.01em;
+}
+.quickstart-urlrow {
+  display: flex;
+  gap: 8px;
+}
+.quickstart-urlrow input {
+  flex: 1;
+  min-width: 0;
+  font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.quickstart-urlrow .btn-secondary {
+  flex: none;
+}
+.quickstart-lesson {
+  margin: 12px 0 0;
+  font-weight: 550;
+}
+.quickstart-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 16px;
+}
+.quickstart-expiry {
+  margin: 14px 0 0;
+}
