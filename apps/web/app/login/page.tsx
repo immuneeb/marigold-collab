@@ -1,18 +1,19 @@
 import { redirect } from "next/navigation";
 import { auth, devLoginEnabled, googleEnabled, signIn } from "@/auth";
+import { safeCallbackUrl } from "@/lib/http";
+import { MagicLinkForm } from "./magic-link-form";
 
 export const runtime = "nodejs";
 
 export default async function LoginPage({
   searchParams,
 }: {
-  searchParams: Promise<{ callbackUrl?: string }>;
+  searchParams: Promise<{ callbackUrl?: string; error?: string }>;
 }) {
   const session = await auth();
-  const { callbackUrl } = await searchParams;
+  const { callbackUrl, error } = await searchParams;
   // Only allow same-app relative callbacks (no open redirect).
-  const redirectTo =
-    callbackUrl && callbackUrl.startsWith("/") ? callbackUrl : "/";
+  const redirectTo = safeCallbackUrl(callbackUrl);
   if (session?.user) redirect(redirectTo);
 
   return (
@@ -21,6 +22,13 @@ export default async function LoginPage({
         <span className="wordmark">🌼 Marigold</span>
         <h1>Sign in</h1>
         <p className="muted small">Google Docs for AI-generated webpages.</p>
+
+        {error === "magic-link" && (
+          <p className="error">
+            That sign-in link is invalid, expired, or was already used. Request
+            a fresh one below.
+          </p>
+        )}
 
         {googleEnabled && (
           <form
@@ -34,6 +42,8 @@ export default async function LoginPage({
             </button>
           </form>
         )}
+
+        <MagicLinkForm callbackUrl={redirectTo} />
 
         {devLoginEnabled && (
           <form
@@ -57,10 +67,6 @@ export default async function LoginPage({
               Continue
             </button>
           </form>
-        )}
-
-        {!googleEnabled && !devLoginEnabled && (
-          <p className="muted small">No sign-in method configured.</p>
         )}
       </div>
     </main>
