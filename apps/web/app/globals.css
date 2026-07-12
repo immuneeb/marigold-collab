@@ -405,6 +405,32 @@ textarea {
   background: var(--accent-soft);
 }
 
+/* Touch: hover can't reveal state and 26–28px is well below the ~44px tap
+   target, so on a coarse pointer enlarge the comment pin and the
+   selection-comment button and give them a pressed state (there's no hover). */
+@media (pointer: coarse) {
+  .pin {
+    width: 40px;
+    height: 40px;
+    font-size: 18px;
+    line-height: 40px;
+    border-radius: 20px 20px 20px 3px;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .pin.sel,
+  .pin:active {
+    background: var(--accent-soft);
+  }
+  .margin-add {
+    padding: 11px 15px;
+    font-size: 16px;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .margin-add:active {
+    background: var(--accent-soft);
+  }
+}
+
 .savestate {
   white-space: nowrap;
 }
