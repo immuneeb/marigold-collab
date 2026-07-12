@@ -167,9 +167,18 @@ export function Landing() {
       <section className="cta-band">
         <h2 className="section-h">Ready to try it?</h2>
         <p className="muted">Sign in and publish your first doc in a minute.</p>
-        <Link href="/login" className="btn btn-inline">
-          Sign in with Google
-        </Link>
+        <div className="quickstart-cta-row">
+          <Link href="/login" className="btn btn-inline">
+            Sign in with Google
+          </Link>
+          <Link href="/new" className="btn-secondary btn-inline">
+            Paste HTML → get a link
+          </Link>
+        </div>
+        <p className="muted small quickstart-cta-note">
+          Pasting needs no account — you get a private link you can share right
+          away.
+        </p>
       </section>
 
       <footer className="landing-foot">
