@@ -15,6 +15,14 @@ import { parse } from "node-html-parser";
 
 export const DEFAULT_ORIGIN = "https://marigold.page";
 
+// Injected by build.mjs (esbuild define) from package.json; "dev" when running
+// straight from src (tests, tsx). Sent as X-Marigold-Source on the share
+// upload so the server can attribute quick-door creations to the CLI — it
+// rides the request you're already making; nothing else is sent or collected.
+declare const __MARIGOLD_DRAFT_VERSION__: string | undefined;
+const CLI_VERSION =
+  typeof __MARIGOLD_DRAFT_VERSION__ === "string" ? __MARIGOLD_DRAFT_VERSION__ : "dev";
+
 /** Same set the local `open` command accepts (server.ts FILE_RE). */
 const FILE_RE = /\.(html?|svg)$/i;
 
@@ -77,7 +85,10 @@ export async function shareDraft(file: string, opts: ShareOptions = {}): Promise
   try {
     res = await fetchImpl(`${origin}/api/quick`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: {
+        "content-type": "application/json",
+        "x-marigold-source": `marigold-draft/${CLI_VERSION}`,
+      },
       body: JSON.stringify({ title, html }),
     });
   } catch (e) {
