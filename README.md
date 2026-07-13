@@ -49,9 +49,7 @@ comment on the rendered page, agents read feedback over MCP) is a separate,
 closed-source service. This repo is the open-source local tool, MIT-licensed,
 and is where its issues and pull requests live.
 
-Development happens in a private monorepo that also contains the hosted
-service; the OSS subset is auto-synced here on every change, so this mirror is
-always current. PRs are welcome — they're reviewed here and ported onto the
+PRs are welcome — they're reviewed here and ported onto the
 internal tree with your authorship preserved.
 
 ## License
