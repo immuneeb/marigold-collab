@@ -1,0 +1,24 @@
+{
+  "name": "@marigold/core",
+  "version": "0.0.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    "./instrument": "./src/instrument.ts",
+    "./agent-src": "./src/agent-src.ts",
+    "./principles": "./src/principles.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "node-html-parser": "^7.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "typescript": "^5.7.3",
+    "vitest": "^2.1.8"
+  }
+}
