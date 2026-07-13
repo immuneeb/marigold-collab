@@ -1,7 +1,7 @@
 {
   "name": "marigold-draft",
-  "version": "0.3.3",
-  "description": "Local Marigold review loop for agent-authored HTML/SVG drafts — comment in the browser, feedback flows straight back to your coding agent.",
+  "version": "0.3.4",
+  "description": "Local Marigold review loop for agent-authored HTML/SVG drafts \u2014 comment in the browser, feedback flows straight back to your coding agent.",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -9,13 +9,25 @@
     "directory": "packages/local"
   },
   "homepage": "https://marigold.page/",
-  "keywords": ["marigold", "review", "comments", "agent", "mcp", "html", "draft"],
+  "keywords": [
+    "marigold",
+    "review",
+    "comments",
+    "agent",
+    "mcp",
+    "html",
+    "draft"
+  ],
   "type": "module",
   "bin": {
     "marigold-draft": "dist/cli.cjs",
     "marigold-local": "dist/cli.cjs"
   },
-  "files": ["dist/cli.cjs", "README.md", "LICENSE"],
+  "files": [
+    "dist/cli.cjs",
+    "README.md",
+    "LICENSE"
+  ],
   "engines": {
     "node": ">=20"
   },
