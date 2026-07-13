@@ -8,12 +8,17 @@ import { db, docEvents, docs, newId } from "@marigold/db";
 // it. This module is the SOLE writer of `doc_events`; the web routes call
 // `appendEvent` after a successful mutation (best-effort — see lib/events.ts).
 
-/** The v1 event vocabulary. `type` is stored as text, so this is advisory. */
+/** The v1 event vocabulary. `type` is stored as text, so this is advisory.
+ * `interaction.*` events carry their full detail (name, value, reader) in
+ * `payload` — self-contained, no enrichment fetch needed. */
 export type DocEventType =
   | "comment.created"
   | "comment.resolved"
   | "content.replaced"
-  | "version.saved";
+  | "version.saved"
+  | "interaction.created"
+  | "interaction.updated"
+  | "interaction.cleared";
 
 export interface DocEvent {
   id: string;

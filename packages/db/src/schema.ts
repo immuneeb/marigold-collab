@@ -259,6 +259,62 @@ export const networkGrants = pgTable(
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Reader interactions: typed, element-anchored signals from in-doc controls
+// ─────────────────────────────────────────────────────────────────────────────
+
+// One row per (doc, control name, reader) — the current value of an interactive
+// control (<mg-control> reaction/rating/choice/toggle/button) for one reader.
+// Last-write-wins: re-tapping updates the row in place; clearing deletes it.
+// Structured signals stay separate from comments — prose in `comments`, typed
+// values here — so an agent can tell "👍 on this card" from a written note.
+export const docInteractions = pgTable(
+  "doc_interactions",
+  {
+    id: text("id").primaryKey(), // "itx_..."
+    docId: text("doc_id")
+      .notNull()
+      .references(() => docs.id, { onDelete: "cascade" }),
+    // Author-chosen control identity (the <mg-control name=...>) — the stable
+    // key across versions, independent of the structural marigoldId.
+    name: text("name").notNull(),
+    // 'reaction' | 'rating' | 'choice' | 'toggle' | 'button' | 'custom'
+    controlType: text("control_type").notNull(),
+    // The typed value (string | number | boolean) as jsonb — never scraped text.
+    value: jsonb("value").notNull(),
+    // Element anchoring, mirroring comments: the composite anchor captured at
+    // tap time + the version it was captured on; re-anchored on every update.
+    anchoredVersionId: text("anchored_version_id").references(
+      () => docVersions.id,
+    ),
+    anchor: jsonb("anchor"),
+    // True when the anchor no longer resolves in the current version. The value
+    // is kept — `name` still identifies the control — just unanchored.
+    orphaned: boolean("orphaned").notNull().default(false),
+    // Reader identity. `readerKey` is the uniqueness key: the userId for
+    // account readers, "guest:<lowercased name>" for quick-doc guests (same
+    // identity proxy as guest comments). readerId/readerName/guest mirror the
+    // comments columns for display.
+    readerKey: text("reader_key").notNull(),
+    readerId: text("reader_id").references(() => users.id),
+    readerName: text("reader_name"),
+    guest: boolean("guest").notNull().default(false),
+    createdAt: createdAt(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    // Idempotent per (reader, control): the upsert target.
+    uniqueIndex("doc_interactions_doc_name_reader_uq").on(
+      t.docId,
+      t.name,
+      t.readerKey,
+    ),
+    index("doc_interactions_doc_idx").on(t.docId),
+  ],
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Feedback-loop events feed
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -275,7 +331,9 @@ export const docEvents = pgTable(
       .notNull()
       .references(() => docs.id, { onDelete: "cascade" }),
     seq: integer("seq").notNull(), // per-doc monotonic, gap-free cursor
-    // 'comment.created' | 'comment.resolved' | 'content.replaced' | 'version.saved'
+    // 'comment.created' | 'comment.resolved' | 'content.replaced' |
+    // 'version.saved' | 'interaction.created' | 'interaction.updated' |
+    // 'interaction.cleared'
     type: text("type").notNull(),
     // Who caused it: user id, or null for anonymous quick-key writes.
     actor: text("actor"),

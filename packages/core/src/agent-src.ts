@@ -55,8 +55,20 @@ export const ANCHOR_AGENT_JS = String.raw`(function () {
   function captureContent(node) {
     var clone = node.cloneNode(true);
     Array.prototype.forEach.call(
-      clone.querySelectorAll("#__mg_controls, script[data-mg-agent]"),
+      clone.querySelectorAll("#__mg_controls, script[data-mg-agent], [data-mg-ui]"),
       function (n) { n.parentNode && n.parentNode.removeChild(n); }
+    );
+    // Un-wire cloned <mg-control>s: agent-added state must never persist into
+    // doc source (a serialized data-mg-wired would block re-init on reload).
+    Array.prototype.forEach.call(
+      clone.querySelectorAll("[data-mg-wired], [data-mg-state], [data-mg-disabled], [data-mg-sel], [data-mg-tap]"),
+      function (n) {
+        n.removeAttribute("data-mg-wired");
+        n.removeAttribute("data-mg-state");
+        n.removeAttribute("data-mg-disabled");
+        n.removeAttribute("data-mg-sel");
+        n.removeAttribute("data-mg-tap");
+      }
     );
     return clone.innerHTML;
   }
@@ -171,15 +183,47 @@ export const ANCHOR_AGENT_JS = String.raw`(function () {
     var s = window.getSelection();
     return !!(s && !s.isCollapsed && s.rangeCount);
   }
-  document.addEventListener("mousedown", function (e) {
+  // ── unified pointer gestures (mouse + touch + pen) ──
+  // Pointer Events fire on every element on every device — crucially, on a tap on
+  // a non-interactive <p> on iOS, where a bare "click" is never dispatched. That
+  // gap is exactly why commenting and tap-to-edit were dead on mobile. We detect a
+  // tap (pointerdown + pointerup with little movement) and run the same placement/
+  // edit logic the desktop click path uses. A drag or scroll (movement, or a
+  // pointercancel when the browser claims the gesture for text selection) is never
+  // a tap, so it can't fire an accidental comment or edit.
+  var tapId = null, tapX = 0, tapY = 0, tapMoved = false, tapType = "";
+  var suppressClick = false;
+  document.addEventListener("pointerdown", function (e) {
     if (controls.contains(e.target)) return;
+    tapId = e.pointerId; tapType = e.pointerType || "";
+    tapX = e.clientX; tapY = e.clientY; tapMoved = false;
     selecting = true;
-    hideControls();
-  });
-  document.addEventListener("mouseup", function () {
+    // Don't yank the controls out from under an active touch edit (re-tapping to
+    // move the caret would otherwise hide them); desktop still clears on drag.
+    if (!editingEl) hideControls();
+  }, { capture: true, passive: true });
+  document.addEventListener("pointermove", function (e) {
+    if (e.pointerId !== tapId) return;
+    if (Math.abs(e.clientX - tapX) > 10 || Math.abs(e.clientY - tapY) > 10) tapMoved = true;
+  }, { capture: true, passive: true });
+  document.addEventListener("pointerup", function (e) {
+    if (e.pointerId !== tapId) return;
+    var moved = tapMoved, type = tapType;
+    tapId = null;
     selecting = false;
-    setTimeout(reportSelection, 0);
-  });
+    setTimeout(reportSelection, 0); // the reliable "report on release" path
+    // Mouse taps fall through to the click handler below (desktop unchanged).
+    // Touch and pen are handled here because their click is unreliable on iOS.
+    if (!moved && type !== "mouse" && handleTap(e.target, e.clientX, e.clientY, null)) {
+      // iOS may still synthesize a compatibility click ~300ms later — swallow it
+      // so it can't re-fire the action or follow a link we just commented on.
+      suppressClick = true;
+      setTimeout(function () { suppressClick = false; }, 700);
+    }
+  }, { capture: true });
+  document.addEventListener("pointercancel", function (e) {
+    if (e.pointerId === tapId) { tapId = null; selecting = false; }
+  }, { capture: true, passive: true });
 
   // ── in-place editing: double-click → contentEditable, blur = auto-save ──
   var editingEl = null, editingOrig = "";
@@ -209,6 +253,9 @@ export const ANCHOR_AGENT_JS = String.raw`(function () {
     // Place the caret where the user clicked (single-click-to-type feel).
     if (caret) { try { var s = window.getSelection(); s.removeAllRanges(); s.addRange(caret); } catch (err) {} }
     send({ type: "editStart", id: mgid(el) });
+    // Touchscreens have no hover to surface the block controls, so reveal them
+    // whenever an edit begins on a coarse pointer (independent of tap vs click).
+    if (coarse) showControlsFor(el);
   }
   function caretFromPoint(x, y) {
     if (document.caretRangeFromPoint) return document.caretRangeFromPoint(x, y);
@@ -227,7 +274,8 @@ export const ANCHOR_AGENT_JS = String.raw`(function () {
     while (el && el.nodeType === 1 && el !== document.body) {
       var t = el.tagName;
       if (t === "A" || t === "BUTTON" || t === "INPUT" || t === "TEXTAREA" ||
-          t === "SELECT" || t === "LABEL" || t === "SUMMARY" || t === "OPTION") return true;
+          t === "SELECT" || t === "LABEL" || t === "SUMMARY" || t === "OPTION" ||
+          t === "MG-CONTROL") return true;
       el = el.parentElement;
     }
     return false;
@@ -257,19 +305,29 @@ export const ANCHOR_AGENT_JS = String.raw`(function () {
     });
   });
 
-  // ── hover controls: move / duplicate / delete / add ──
+  // ── block controls: move / duplicate / delete / add. Revealed on hover
+  // (desktop) or on tap (touch — see handleTap); a touchscreen has no hover. ──
+  var coarse = false;
+  try { coarse = !!(window.matchMedia && window.matchMedia("(pointer: coarse)").matches); } catch (e) {}
   var controls = document.createElement("div");
   controls.id = "__mg_controls";
-  controls.style.cssText = "position:fixed;display:none;z-index:2147483647;background:#fff;border:1px solid #e8870f;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,.18);padding:2px;gap:2px;align-items:center;font:12px/1 system-ui,sans-serif;";
+  controls.style.cssText = "position:fixed;display:none;z-index:2147483647;background:#fff;border:1px solid #e8870f;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,.18);padding:2px;gap:2px;align-items:center;font:12px/1 system-ui,sans-serif;touch-action:manipulation;";
   var curTarget = null;
   function mkBtn(label, title, fn) {
     var b = document.createElement("button");
     b.type = "button";
     b.textContent = label;
     b.title = title;
-    b.style.cssText = "border:0;background:transparent;cursor:pointer;padding:4px 6px;border-radius:5px;font-size:12px;color:#b8690a;";
+    // Coarse pointers get ~40px tap targets (was 20px) so the controls are
+    // actually usable with a thumb.
+    b.style.cssText = coarse
+      ? "border:0;background:transparent;cursor:pointer;padding:12px 14px;border-radius:6px;font-size:18px;line-height:1;min-width:44px;color:#b8690a;-webkit-tap-highlight-color:transparent;"
+      : "border:0;background:transparent;cursor:pointer;padding:4px 6px;border-radius:5px;font-size:12px;color:#b8690a;";
     b.addEventListener("mouseenter", function () { b.style.background = "#fdf3e3"; });
     b.addEventListener("mouseleave", function () { b.style.background = "transparent"; });
+    // Don't let a tap on a control steal focus from the element being edited —
+    // that would blur→save→clear curTarget before this handler's fn runs.
+    b.addEventListener("pointerdown", function (e) { e.preventDefault(); });
     b.addEventListener("click", function (e) {
       e.preventDefault(); e.stopPropagation();
       if (curTarget && document.contains(curTarget)) fn(curTarget);
@@ -332,7 +390,20 @@ export const ANCHOR_AGENT_JS = String.raw`(function () {
     controls.style.left = Math.max(4, Math.min(window.innerWidth - w - 4, r.right - w)) + "px";
     controls.style.top = Math.max(4, r.top - 30) + "px";
   }
+  // Show synchronously (rAF gating is unreliable in throttled/background frames,
+  // and must re-show even when re-targeting the same element).
+  function showControlsFor(el) {
+    if (!el || el === document.body) return;
+    ensureControls();
+    curTarget = el;
+    controls.style.display = "flex";
+    positionControls();
+  }
   document.addEventListener("mousemove", function (e) {
+    // Coarse pointers manage the controls via tap (handleTap/beginEdit); ignore
+    // mouse movement entirely so the *compatibility* mousemove a touch tap emits
+    // can't immediately hide the controls that tap just revealed.
+    if (coarse) return;
     // Suppressed while editing, in comment mode, mid-drag, or when text is
     // selected — element controls must never fight text selection / commenting.
     if (!editEnabled || commentMode || editingEl || selecting || hasSelection()) {
@@ -342,32 +413,176 @@ export const ANCHOR_AGENT_JS = String.raw`(function () {
     if (controls.contains(e.target)) return;
     var el = nearestMg(e.target);
     if (!el || el === document.body) { hideControls(); return; }
-    // Show synchronously (rAF gating is unreliable in throttled/background
-    // frames, and must re-show even when hovering the same element again).
-    ensureControls();
-    curTarget = el;
-    controls.style.display = "flex";
-    positionControls();
+    showControlsFor(el);
   }, { passive: true });
 
-  document.addEventListener("click", function (e) {
-    if (controls.contains(e.target)) return;
-    // Explicit comment mode: click any element to anchor a comment there.
+  // A tap resolved from a pointerup (touch/pen) or a mouse click. Comment mode
+  // anchors a comment where you tapped; otherwise a tap on editable text starts
+  // an in-place edit (beginEdit reveals the block controls on coarse pointers).
+  // Returns true when it acted, so the pointerup caller can swallow the trailing
+  // synthetic click.
+  function handleTap(target, x, y, ev) {
+    if (controls.contains(target)) return false;
+    // Explicit comment mode: tap any element to anchor a comment there.
     if (commentMode) {
-      e.preventDefault(); e.stopPropagation();
+      if (ev) { ev.preventDefault(); ev.stopPropagation(); }
       commentMode = false;
       document.documentElement.style.cursor = "";
-      send({ type: "placed", anchor: anchorFor(e.target, null), point: { x: e.clientX, y: e.clientY } });
-      return;
+      send({ type: "placed", anchor: anchorFor(target, null), point: { x: x, y: y } });
+      return true;
     }
-    // Single-click to edit: place a caret and start typing (Google-Docs feel).
-    if (!editEnabled || editingEl) return;
-    if (hasSelection()) return;          // a drag-select → comment, not edit
-    if (isInteractive(e.target)) return; // keep links / buttons / inputs working
-    var el = nearestMg(e.target);
-    if (!el || el === document.body) return;
-    beginEdit(el, caretFromPoint(e.clientX, e.clientY));
+    // Single-tap to edit: place a caret and start typing (Google-Docs feel).
+    if (!editEnabled || editingEl) return false;
+    if (hasSelection()) return false;    // a drag-select → comment, not edit
+    // Tapping a link/button or blank space while editing dismisses the controls
+    // on touch (there's no click-away hover to do it); keep those elements working.
+    if (isInteractive(target)) { if (coarse) hideControls(); return false; }
+    var el = nearestMg(target);
+    if (!el || el === document.body) { if (coarse) hideControls(); return false; }
+    beginEdit(el, caretFromPoint(x, y)); // reveals controls on coarse pointers
+    return true;
+  }
+  document.addEventListener("click", function (e) {
+    // A touch tap already acted on pointerup; drop the synthesized click so it
+    // can't double-fire or navigate a link under the comment we just placed.
+    if (suppressClick) { suppressClick = false; e.preventDefault(); e.stopPropagation(); return; }
+    if (controls.contains(e.target)) return;
+    handleTap(e.target, e.clientX, e.clientY, e);
   }, true);
+
+  // ── interactive controls (<mg-control>) — one-tap typed reader signals ──
+  // The agent renders + wires author-placed <mg-control name=...> elements.
+  // A tap computes the next value locally (optimistic paint) and relays it to
+  // the parent shell, which persists it — this frame has no network path
+  // (CSP connect-src 'none'). The parent hydrates saved values and enables
+  // taps via an "interactions" message; until then controls render muted.
+  // Types: reaction (👍/👎, or a values attr), rating (1..max stars), choice
+  // (values enum), toggle (bool), button (fire-and-forget). Authors may
+  // instead supply their own child elements carrying data-mg-value.
+  var ctrlEnabled = false;
+  var ctrlValues = {};
+  var CTRL_STYLE =
+    "mg-control{display:inline-flex;gap:6px;align-items:center;vertical-align:middle}" +
+    "mg-control [data-mg-tap]{cursor:pointer;-webkit-user-select:none;user-select:none}" +
+    "mg-control [data-mg-ui]{border:1px solid #d8d8d8;background:transparent;border-radius:999px;padding:4px 10px;font:13px/1 system-ui,sans-serif;color:inherit;opacity:.75}" +
+    "mg-control [data-mg-ui]:hover{border-color:#e8870f;opacity:1}" +
+    "mg-control [data-mg-ui][data-mg-sel]{background:#fdf3e3;border-color:#e8870f;color:#b8690a;opacity:1}" +
+    "mg-control[data-mg-disabled] [data-mg-tap]{pointer-events:none;opacity:.45}";
+  function injectCtrlStyle() {
+    if (document.getElementById("__mg_ctrl_style")) return;
+    var st = document.createElement("style");
+    st.id = "__mg_ctrl_style";
+    st.textContent = CTRL_STYLE;
+    (document.head || document.documentElement).appendChild(st);
+  }
+  function ctrlTypeOf(el) {
+    var t = (el.getAttribute("type") || "reaction").toLowerCase();
+    return t === "rating" || t === "choice" || t === "toggle" || t === "button" ? t : "reaction";
+  }
+  function ctrlTaps(el) { return el.querySelectorAll("[data-mg-value]"); }
+  function mkTap(label, value, title) {
+    var b = document.createElement("button");
+    b.type = "button";
+    b.setAttribute("data-mg-ui", "");
+    b.setAttribute("data-mg-tap", "");
+    b.setAttribute("data-mg-value", value);
+    if (title) b.title = title;
+    b.textContent = label;
+    return b;
+  }
+  function renderCtrl(el, type) {
+    var i;
+    if (type === "rating") {
+      var max = Math.max(1, Math.min(10, parseInt(el.getAttribute("max") || "5", 10) || 5));
+      for (i = 1; i <= max; i++) el.appendChild(mkTap("★", String(i), i + " of " + max));
+    } else if (type === "toggle") {
+      el.appendChild(mkTap(el.getAttribute("label") || "✓", "true", ""));
+    } else if (type === "button") {
+      el.appendChild(mkTap(el.getAttribute("label") || "Go", el.getAttribute("value") || "pressed", ""));
+    } else {
+      var vals = (el.getAttribute("values") || (type === "reaction" ? "up,down" : ""))
+        .split(",")
+        .map(function (s) { return s.trim(); })
+        .filter(function (s) { return s.length > 0; });
+      for (i = 0; i < vals.length; i++) {
+        var v = vals[i];
+        var label = type === "reaction" ? (v === "up" ? "👍" : v === "down" ? "👎" : v) : v;
+        el.appendChild(mkTap(label, v, v));
+      }
+    }
+  }
+  // Next value on tap: toggle flips; button always fires its value; the others
+  // set — and re-tapping the selected value clears (null).
+  function ctrlNext(type, cur, raw) {
+    if (type === "toggle") return cur !== true;
+    if (type === "button") return raw;
+    if (type === "rating") { var n = parseInt(raw, 10) || 0; return cur === n ? null : n; }
+    return cur === raw ? null : raw;
+  }
+  function paintCtrl(el, type, name) {
+    var cur = ctrlValues[name];
+    var has = cur !== undefined && cur !== null;
+    if (has) el.setAttribute("data-mg-state", String(cur));
+    else el.removeAttribute("data-mg-state");
+    var taps = ctrlTaps(el);
+    for (var i = 0; i < taps.length; i++) {
+      var t = taps[i];
+      var raw = t.getAttribute("data-mg-value");
+      var sel = false;
+      if (has) {
+        if (type === "rating") sel = (parseInt(raw, 10) || 0) <= Number(cur);
+        else if (type === "toggle") sel = cur === true;
+        else sel = String(cur) === raw;
+      }
+      if (sel) t.setAttribute("data-mg-sel", "");
+      else t.removeAttribute("data-mg-sel");
+    }
+  }
+  function wireCtrl(el) {
+    if (el.getAttribute("data-mg-wired")) return;
+    el.setAttribute("data-mg-wired", "1");
+    var name = el.getAttribute("name");
+    var type = ctrlTypeOf(el);
+    var taps = ctrlTaps(el);
+    if (taps.length === 0) renderCtrl(el, type);
+    else {
+      // Author-supplied UI: mark the targets tappable (cursor/disabled styles).
+      for (var j = 0; j < taps.length; j++) taps[j].setAttribute("data-mg-tap", "");
+    }
+    if (!ctrlEnabled) el.setAttribute("data-mg-disabled", "");
+    el.addEventListener("click", function (e) {
+      var t = e.target;
+      while (t && t !== el && !(t.hasAttribute && t.hasAttribute("data-mg-value")))
+        t = t.parentElement;
+      if (!t || t === el || !t.hasAttribute("data-mg-value")) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (!ctrlEnabled) return;
+      var next = ctrlNext(type, ctrlValues[name], t.getAttribute("data-mg-value"));
+      ctrlValues[name] = next;
+      paintCtrl(el, type, name);
+      send({ type: "interaction", name: name, controlType: type, value: next, anchor: anchorFor(el) });
+    });
+    paintCtrl(el, type, name);
+  }
+  function initControls() {
+    var list = document.querySelectorAll("mg-control[name]");
+    if (list.length === 0) return;
+    injectCtrlStyle();
+    for (var i = 0; i < list.length; i++) wireCtrl(list[i]);
+  }
+  function applyInteractions(d) {
+    ctrlEnabled = !!d.enabled;
+    ctrlValues = d.values && typeof d.values === "object" ? d.values : {};
+    initControls(); // idempotent — wires any control added since load
+    var list = document.querySelectorAll("mg-control[name]");
+    for (var i = 0; i < list.length; i++) {
+      var el = list[i];
+      if (ctrlEnabled) el.removeAttribute("data-mg-disabled");
+      else el.setAttribute("data-mg-disabled", "");
+      paintCtrl(el, ctrlTypeOf(el), el.getAttribute("name"));
+    }
+  }
 
   window.addEventListener("message", function (e) {
     var d = e.data;
@@ -378,11 +593,14 @@ export const ANCHOR_AGENT_JS = String.raw`(function () {
     else if (d.type === "editable") { editEnabled = !!d.on; if (!d.on) { endEdit(false); hideControls(); } }
     else if (d.type === "clearSelection") { try { window.getSelection().removeAllRanges(); } catch (err) {} lastSelKey = ""; }
     else if (d.type === "scrollTo") { var el = elFor(d.id); if (el) el.scrollIntoView({ block: "center", behavior: "smooth" }); }
+    else if (d.type === "interactions") { applyInteractions(d); }
   });
 
   window.addEventListener("scroll", schedule, true);
   window.addEventListener("resize", schedule);
   if (window.ResizeObserver) { try { new ResizeObserver(schedule).observe(document.documentElement); } catch (e) {} }
+
+  initControls();
 
   // Re-emit ready a few times: if the parent hasn't hydrated its message
   // listener yet, a single ready is lost. (The parent also proactively pushes

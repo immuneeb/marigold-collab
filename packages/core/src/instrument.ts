@@ -4,7 +4,7 @@ import { sha256Hex } from "./hash";
 // Bump when the agent's protocol/behavior changes. The render origin rewrites
 // every served doc's tag to AGENT_SRC, so a bump busts the browser cache for
 // ALL docs (existing ones included) without needing a re-save.
-export const AGENT_VERSION = 7;
+export const AGENT_VERSION = 8;
 export const AGENT_SRC = `/__mg/agent.js?v=${AGENT_VERSION}`;
 const AGENT_TAG = `<script src="${AGENT_SRC}" data-mg-agent></script>`;
 // Matches any prior agent tag src so serve-time rewrite can normalize it.
@@ -50,7 +50,10 @@ function assignIds(el: HTMLElement, path: string): void {
     const childPath = `${path}>${tag}:${counts[tag]}`;
     if (!SKIP.has(tag)) {
       if (!child.getAttribute("data-marigold-id")) {
-        child.setAttribute("data-marigold-id", `mg-${sha256Hex(childPath).slice(0, 10)}`);
+        child.setAttribute(
+          "data-marigold-id",
+          `mg-${sha256Hex(childPath).slice(0, 10)}`,
+        );
       }
     }
     assignIds(child, childPath);
@@ -122,7 +125,10 @@ export function applyInlineEdits(html: string, edits: InlineEdit[]): string {
  * order marigoldId → css → textQuote. Returns the resolving element's id, or
  * null if it can't be found (→ orphan). Used for server-side re-anchoring (P5).
  */
-export function resolveAnchor(html: string, anchor: CommentAnchor): string | null {
+export function resolveAnchor(
+  html: string,
+  anchor: CommentAnchor,
+): string | null {
   const root = parse(html, { comment: true });
 
   if (anchor.marigoldId) {

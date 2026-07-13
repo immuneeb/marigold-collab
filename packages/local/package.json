@@ -1,6 +1,6 @@
 {
   "name": "marigold-draft",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Local Marigold review loop for agent-authored HTML/SVG drafts — comment in the browser, feedback flows straight back to your coding agent.",
   "license": "MIT",
   "repository": {

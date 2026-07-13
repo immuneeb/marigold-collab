@@ -405,6 +405,32 @@ textarea {
   background: var(--accent-soft);
 }
 
+/* Touch: hover can't reveal state and 26–28px is well below the ~44px tap
+   target, so on a coarse pointer enlarge the comment pin and the
+   selection-comment button and give them a pressed state (there's no hover). */
+@media (pointer: coarse) {
+  .pin {
+    width: 40px;
+    height: 40px;
+    font-size: 18px;
+    line-height: 40px;
+    border-radius: 20px 20px 20px 3px;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .pin.sel,
+  .pin:active {
+    background: var(--accent-soft);
+  }
+  .margin-add {
+    padding: 11px 15px;
+    font-size: 16px;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .margin-add:active {
+    background: var(--accent-soft);
+  }
+}
+
 .savestate {
   white-space: nowrap;
 }
@@ -1159,7 +1185,11 @@ select {
 }
 kbd {
   display: inline-block;
-  font: 600 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font:
+    600 12px/1 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
   color: var(--marigold-dark);
   background: var(--accent-soft);
   border: 1px solid var(--line);
@@ -1221,4 +1251,25 @@ kbd {
 }
 .quickstart-expiry {
   margin: 14px 0 0;
+/* Interaction (mg-control tap) failure toast — transient, auto-dismisses. */
+.itx-toast {
+  position: fixed;
+  bottom: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 60;
+  padding: 8px 14px;
+  font-size: 12.5px;
+  border-radius: 999px;
+  color: #b3261e;
+  background: #fdece9;
+  border: 1px solid #f4c7c0;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+}
+@media (prefers-color-scheme: dark) {
+  .itx-toast {
+    color: #ffb4a8;
+    background: #3a1512;
+    border-color: #5c241d;
+  }
 }
