@@ -71,6 +71,13 @@
       "when": 1783893729036,
       "tag": "0009_shiny_cammi",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1783901985927,
+      "tag": "0010_useful_puppet_master",
+      "breakpoints": true
     }
   ]
 }
