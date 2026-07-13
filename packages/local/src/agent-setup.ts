@@ -159,19 +159,24 @@ the marigold-draft skill, or \`marigold-draft help\`.
 ${CLAUDE_MD_END}`;
 
 /**
- * Insert or refresh the managed block in an existing CLAUDE.md body.
+ * Insert or refresh a marker-managed block in an instruction file's body.
  * Exported for tests. Returns the new body, or null when the file has a
  * start marker but no end marker (hand-edited — don't risk mangling it).
  */
-export function upsertClaudeMdBlock(existing: string): string | null {
+export function upsertManagedBlock(existing: string, block: string): string | null {
   const start = existing.indexOf(CLAUDE_MD_START_PREFIX);
   if (start === -1) {
     const sep = existing.length === 0 ? "" : existing.endsWith("\n\n") ? "" : existing.endsWith("\n") ? "\n" : "\n\n";
-    return existing + sep + CLAUDE_MD_BLOCK + "\n";
+    return existing + sep + block + "\n";
   }
   const end = existing.indexOf(CLAUDE_MD_END, start);
   if (end === -1) return null;
-  return existing.slice(0, start) + CLAUDE_MD_BLOCK + existing.slice(end + CLAUDE_MD_END.length);
+  return existing.slice(0, start) + block + existing.slice(end + CLAUDE_MD_END.length);
+}
+
+/** The Claude Code flavor (references the installed skill). */
+export function upsertClaudeMdBlock(existing: string): string | null {
+  return upsertManagedBlock(existing, CLAUDE_MD_BLOCK);
 }
 
 const AGENTS_SNIPPET = `## Marigold Draft (local review loop)
@@ -197,6 +202,43 @@ When asked to "spin up marigold draft" (or for a local commentable draft):
    Marigold and prints a share link (anyone with it can view + comment) plus a
    claim link (sign in to keep it and control access).
 Never run \`marigold-draft serve\` or \`stop\` yourself.`;
+
+/** The same snippet, marker-wrapped, for other assistants' global rule files. */
+const AGENTS_BLOCK = `${CLAUDE_MD_START}
+${AGENTS_SNIPPET}
+${CLAUDE_MD_END}`;
+
+/**
+ * Write the review-loop block into the GLOBAL instruction file of every other
+ * assistant detected on this machine (their config dir exists), so the
+ * default applies across projects — Codex (~/.codex/AGENTS.md), opencode
+ * (global config AGENTS.md), Gemini/Antigravity (~/.gemini/GEMINI.md).
+ * Never creates an assistant's directory; absence = not installed = skip.
+ */
+function setupGlobalAgentsFiles(): string[] {
+  const xdg = process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config");
+  const targets: { name: string; dir: string; file: string }[] = [
+    { name: "Codex", dir: join(homedir(), ".codex"), file: "AGENTS.md" },
+    { name: "opencode", dir: join(xdg, "opencode"), file: "AGENTS.md" },
+    { name: "Gemini/Antigravity", dir: join(homedir(), ".gemini"), file: "GEMINI.md" },
+  ];
+  const written: string[] = [];
+  for (const t of targets) {
+    if (!existsSync(t.dir)) continue;
+    const p = join(t.dir, t.file);
+    const existing = existsSync(p) ? readFileSync(p, "utf8") : "";
+    const updated = upsertManagedBlock(existing, AGENTS_BLOCK);
+    if (updated === null) {
+      log(`• ${t.name}: ${p} has a marigold-draft start marker without its end marker — left untouched.`);
+      continue;
+    }
+    const verb = existing.includes(CLAUDE_MD_START_PREFIX) ? "refreshed" : "added";
+    if (updated !== existing) writeFileSync(p, updated);
+    log(`✓ ${t.name}: review-loop block ${verb} in ${p}`);
+    written.push(t.name);
+  }
+  return written;
+}
 
 function desktopConfigPath(): string {
   if (process.platform === "darwin")
@@ -260,19 +302,19 @@ function setupClaudeDesktop(): boolean {
   return true;
 }
 
-export function runAgentSetup(opts: { claudeMd?: boolean } = {}): void {
+export function runAgentSetup(opts: { claudeMd?: boolean; agentsMd?: boolean } = {}): void {
   log("Setting up Marigold Draft for your AI tooling…\n");
-  const code = setupClaudeCode();
+  setupClaudeCode();
   if (opts.claudeMd !== false) setupClaudeMd();
   const desktop = setupClaudeDesktop();
+  const others = opts.agentsMd !== false ? setupGlobalAgentsFiles() : [];
   log("");
-  if (!code || !desktop) {
-    log("For other agents (Cursor, etc.), add this to your AGENTS.md / CLAUDE.md:");
-  } else {
-    log("Using other agents too (Cursor, etc.)? Add this to your AGENTS.md / CLAUDE.md:");
+  if (others.length) {
+    log(`Global review-loop rules written for: ${others.join(", ")} — applies across all projects.`);
   }
+  log("Using an agent not covered above (Cursor, aider, …)? Add this to its global rules file:");
   log("\n" + AGENTS_SNIPPET + "\n");
-  logOtherAssistants();
+  if (!desktop || !others.length) logOtherAssistants();
   log("Try it: ask your agent to 'spin up marigold draft with a hello-world page'.");
 }
 

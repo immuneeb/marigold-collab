@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { upsertClaudeMdBlock } from "../src/agent-setup";
+import { upsertClaudeMdBlock, upsertManagedBlock } from "../src/agent-setup";
 
 const START = "<!-- marigold-draft:start";
 const END = "<!-- marigold-draft:end -->";
@@ -41,5 +41,17 @@ describe("upsertClaudeMdBlock", () => {
   it("refuses to touch a file with a start marker but no end marker", () => {
     const broken = `${START} — managed -->\nsomething the user hand-edited\n`;
     expect(upsertClaudeMdBlock(broken)).toBeNull();
+  });
+
+  it("upserts arbitrary marker-wrapped blocks (other agents' AGENTS.md)", () => {
+    const block = `${START} -->\nagents content\n${END}`;
+    const once = upsertManagedBlock("# global rules\n", block)!;
+    expect(once).toContain("# global rules");
+    expect(once).toContain("agents content");
+    // a claude-flavored upsert then REPLACES it (same markers, one block)
+    const swapped = upsertClaudeMdBlock(once)!;
+    expect(swapped).not.toContain("agents content");
+    expect(swapped).toContain("Present work for review as Marigold Drafts");
+    expect(swapped.split(START).length - 1).toBe(1);
   });
 });

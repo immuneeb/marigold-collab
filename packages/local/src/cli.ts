@@ -219,7 +219,10 @@ async function main(): Promise<void> {
 
     case "agent-setup": {
       const { runAgentSetup } = await import("./agent-setup");
-      runAgentSetup({ claudeMd: flags["no-claude-md"] !== true });
+      runAgentSetup({
+        claudeMd: flags["no-claude-md"] !== true,
+        agentsMd: flags["no-agents-md"] !== true,
+      });
       return;
     }
 
@@ -340,9 +343,13 @@ async function main(): Promise<void> {
   principles [mode] [topic…]  print the Marigold authoring methodology + mode posture pack
                               modes: analyze|learn|judge|decide|organize|tune|do|track
   mcp                         stdio MCP server (for Claude Desktop and other chat clients)
-  agent-setup                 wire up Claude Code (skill + review-by-default block in
-                              ~/.claude/CLAUDE.md) and Claude Desktop (MCP) on this machine
-                              --no-claude-md   skip the CLAUDE.md block`);
+  agent-setup                 wire up every assistant on this machine, globally (all
+                              projects): Claude Code skill + ~/.claude/CLAUDE.md block,
+                              Claude Desktop MCP, and the review-loop block in detected
+                              agents' global rules (~/.codex/AGENTS.md, opencode
+                              AGENTS.md, ~/.gemini/GEMINI.md)
+                              --no-claude-md   skip the ~/.claude/CLAUDE.md block
+                              --no-agents-md   skip other agents' global rules files`);
       if (cmd !== "help") process.exit(1);
   }
 }
