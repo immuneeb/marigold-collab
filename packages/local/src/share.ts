@@ -13,7 +13,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { basename } from "node:path";
 import { parse } from "node-html-parser";
 
-export const DEFAULT_ORIGIN = "https://marigold-collab-web.vercel.app";
+export const DEFAULT_ORIGIN = "https://marigold.page";
 
 /** Same set the local `open` command accepts (server.ts FILE_RE). */
 const FILE_RE = /\.(html?|svg)$/i;

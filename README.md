@@ -17,12 +17,12 @@ marigold-draft agent-setup   # wires up Claude Code (skill) + Claude Desktop (MC
 Or hand this prompt to your coding agent:
 
 > Install Marigold Draft for me using `npm i -g marigold-draft`, then read
-> https://marigold-collab-web.vercel.app/draft/setup.md and set yourself up
+> https://marigold.page/draft/setup.md and set yourself up
 > to use it.
 
 **Full docs: [packages/local/README.md](packages/local/README.md)** — the
 agent loop, in-place edits, `.svg` drafts, sharing, and graduating a draft to
-[hosted Marigold](https://marigold-collab-web.vercel.app/) when you want a
+[hosted Marigold](https://marigold.page/) when you want a
 link you can send to someone.
 
 ## What's in this repo

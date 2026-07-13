@@ -331,7 +331,7 @@ async function main(): Promise<void> {
                    print a share link (anyone with it can view + comment) and a
                    claim link (sign in to keep it and control access)
                    --title <t>    title (defaults to the file's <title> or name)
-                   --origin <url> hosted origin (default marigold-collab-web.vercel.app,
+                   --origin <url> hosted origin (default marigold.page,
                                   or set MARIGOLD_ORIGIN)
   comments <file>  list comments   [--json]
   reply <file> <id> <text…>   reply to a comment (badged AI)

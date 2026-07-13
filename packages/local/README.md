@@ -28,7 +28,7 @@ marigold-draft agent-setup   # wires up Claude Code (skill) + Claude Desktop (MC
 Or hand this prompt to your coding agent:
 
 > Install Marigold Draft for me using `npm i -g marigold-draft`, then read
-> https://marigold-collab-web.vercel.app/draft/setup.md and set yourself up
+> https://marigold.page/draft/setup.md and set yourself up
 > to use it.
 
 From the monorepo instead: `pnpm --filter marigold-draft build`, then link
@@ -74,10 +74,10 @@ marigold-draft share draft.html --title "Q3 Review" --origin http://localhost:30
    into your account (the quick link is burned), and you can share it by email at
    viewer / commenter / editor roles, with kept version history. For ongoing
    agent work on a claimed doc, point your agent at the hosted MCP endpoint,
-   `https://marigold-collab-web.vercel.app/api/mcp`.
+   `https://marigold.page/api/mcp`.
 
 `share` defaults the title to the file's `<title>` (or its filename) and posts
-to `https://marigold-collab-web.vercel.app` — override with `--origin` or
+to `https://marigold.page` — override with `--origin` or
 `MARIGOLD_ORIGIN`. Local comments stay in the local sidecar; the hosted copy
 starts a fresh thread on the same anchoring engine, so comments re-anchor across
 revisions there exactly as they do locally.
@@ -90,7 +90,7 @@ open <file>       serve + open in browser, wait for feedback
 listen            stream every submitted round as JSON lines (all drafts);
                   reconnects forever — run under a persistent monitor
 share <file>      publish to hosted Marigold + print a share link and claim link
-                  --title <t> --origin <url> (default marigold-collab-web.vercel.app)
+                  --title <t> --origin <url> (default marigold.page)
 comments <file>   list threads               [--json]
 reply <file> <id> <text…>    reply to a comment (badged AI in the UI)
 resolve|reopen <file> <id>   set comment status
@@ -148,7 +148,7 @@ per assistant:
 GUI apps may not inherit your shell `PATH`; if the server won't start, use the
 absolute path from `which marigold-draft`. Full copy-pasteable snippets and the
 `AGENTS.md` block:
-[`/draft/setup.md`](https://marigold-collab-web.vercel.app/draft/setup.md).
+[`/draft/setup.md`](https://marigold.page/draft/setup.md).
 
 ## Resilience
 

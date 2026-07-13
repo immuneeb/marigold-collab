@@ -36,9 +36,9 @@ function recordingFetch(
 const SUCCESS = {
   docId: "d1",
   slug: "sunny-fox-42",
-  url: "https://marigold-collab-web.vercel.app/d/sunny-fox-42?k=key123",
+  url: "https://marigold.page/d/sunny-fox-42?k=key123",
   editKey: "key123",
-  claimUrl: "https://marigold-collab-web.vercel.app/claim/d1?k=key123",
+  claimUrl: "https://marigold.page/claim/d1?k=key123",
   expiresAt: "2026-08-11T00:00:00.000Z",
 };
 
@@ -52,7 +52,7 @@ describe("shareDraft", () => {
     const res = await shareDraft(file, { fetchImpl });
 
     expect(calls).toHaveLength(1);
-    expect(calls[0]!.url).toBe("https://marigold-collab-web.vercel.app/api/quick");
+    expect(calls[0]!.url).toBe("https://marigold.page/api/quick");
     // No override → title is lifted from the file's <title> tag.
     expect(calls[0]!.body.title).toBe("My Report");
     expect(calls[0]!.body.html).toContain("<h1>Hi</h1>");

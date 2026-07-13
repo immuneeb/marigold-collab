@@ -120,7 +120,7 @@ this", or "publish it" — offer hosted Marigold. Two rungs:
    the doc becomes a private doc in their account (the quick link is burned),
    shareable by email at viewer/commenter/editor roles, with version history.
    For ongoing agent work on claimed docs, connect to the hosted MCP endpoint:
-   https://marigold-collab-web.vercel.app/api/mcp
+   https://marigold.page/api/mcp
 
 Local comments stay in the local sidecar; the hosted copy starts fresh (same
 anchoring engine, so comments re-anchor across revisions identically there).
@@ -280,7 +280,7 @@ export function runAgentSetup(opts: { claudeMd?: boolean } = {}): void {
  * Print the per-assistant wiring for agents `agent-setup` can't touch directly
  * (Codex, opencode, Antigravity). CLI agents can just use the snippet above; the
  * MCP registration below is for structured-tool clients. Full copy-pasteable
- * snippets live at https://marigold-collab-web.vercel.app/draft/setup.md.
+ * snippets live at https://marigold.page/draft/setup.md.
  */
 function logOtherAssistants(): void {
   log("Prefer MCP (or your agent can't run a shell)? Register the stdio server:");
@@ -295,5 +295,5 @@ function logOtherAssistants(): void {
   log('      "marigold-draft": { "command": "marigold-draft", "args": ["mcp"] } }');
   log("  GUI apps that don't inherit PATH: replace \"marigold-draft\" with its");
   log("  absolute path from `which marigold-draft`.");
-  log("  Details + AGENTS.md snippet: https://marigold-collab-web.vercel.app/draft/setup.md\n");
+  log("  Details + AGENTS.md snippet: https://marigold.page/draft/setup.md\n");
 }
