@@ -12,6 +12,12 @@ export interface LocalComment {
   status: "open" | "resolved" | "orphaned";
   viaAssistant: boolean;
   createdAt: string;
+  /** "overall" = doc-level feedback from the submit box — deliberately
+   * anchor-less, never re-anchored/orphaned, rendered as its own card. Stored
+   * as a comment so it shares the comments' durability and every read path
+   * (an overallComment that only rode the round payload could be missed by
+   * agents reading comments non-blockingly). */
+  kind?: "overall";
 }
 
 export interface ReviewRound {
@@ -133,7 +139,7 @@ function escapeHtml(s: string): string {
 export function reanchorComments(comments: LocalComment[], instrumentedHtml: string): boolean {
   let changed = false;
   for (const c of comments) {
-    if (c.parentId) continue;
+    if (c.parentId || c.kind === "overall") continue;
     const anchor = c.anchor ?? {};
     const rid = resolveAnchor(instrumentedHtml, anchor);
     if (rid) {

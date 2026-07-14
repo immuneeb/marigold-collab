@@ -59,6 +59,7 @@ export interface ReviewPayload {
     author: string;
     body: string;
     status: string;
+    kind: "overall" | null;
     anchoredText: string | null;
     replies: Array<{ id: string; author: string; body: string; byAi: boolean }>;
   }>;
@@ -332,11 +333,21 @@ export class LocalServer {
     for (const s of this.byId.values()) this.broadcastAgentPresence(s);
   }
 
+  /** Freeform text from EVERY round not yet handed to an agent — catch-up
+   * delivers one payload for possibly many rounds, and an earlier round's
+   * overall feedback must not be skipped just because a later round exists. */
+  private pendingOverall(session: DocSession): string | null {
+    const texts = session.sidecar.reviews
+      .slice(session.sidecar.deliveredSeq)
+      .map((r) => r.overallComment)
+      .filter((t): t is string => !!t);
+    return texts.length ? texts.join("\n\n") : null;
+  }
+
   /** Hand any not-yet-delivered round to one agent stream (connect catch-up). */
   private emitPendingTo(session: DocSession, listener: http.ServerResponse): void {
     if (session.sidecar.reviews.length <= session.sidecar.deliveredSeq) return;
-    const last = session.sidecar.reviews[session.sidecar.reviews.length - 1]!;
-    const payload = this.reviewPayload(session, last.overallComment);
+    const payload = this.reviewPayload(session, this.pendingOverall(session));
     payload.reviewSeq = session.sidecar.reviews.length;
     session.sidecar.deliveredSeq = payload.reviewSeq;
     saveSidecar(session.path, session.sidecar);
@@ -347,7 +358,7 @@ export class LocalServer {
 
   private addComment(
     session: DocSession,
-    input: { parentId?: string | null; body: string; anchor?: CommentAnchor | null; author?: string; viaAssistant?: boolean },
+    input: { parentId?: string | null; body: string; anchor?: CommentAnchor | null; author?: string; viaAssistant?: boolean; kind?: "overall" },
   ): LocalComment {
     session.sidecar.seq += 1;
     const c: LocalComment = {
@@ -359,6 +370,7 @@ export class LocalServer {
       status: "open",
       viaAssistant: !!input.viaAssistant,
       createdAt: new Date().toISOString(),
+      ...(input.kind ? { kind: input.kind } : {}),
     };
     session.sidecar.comments.push(c);
     saveSidecar(session.path, session.sidecar);
@@ -383,6 +395,7 @@ export class LocalServer {
         author: c.author,
         body: c.body,
         status: c.status,
+        kind: c.kind ?? null,
         anchoredText: c.anchor?.textQuote?.exact ?? null,
         replies: cs
           .filter((r) => r.parentId === c.id)
@@ -657,6 +670,10 @@ export class LocalServer {
     if (sub === "/submit" && method === "POST") {
       const body = await readBody(req);
       const overall = typeof body.overallComment === "string" && body.overallComment.trim() ? body.overallComment.trim() : null;
+      // Freeform text becomes a doc-level comment FIRST: it's then durable,
+      // visible in the sidebar, part of openComments, and reaches agents on
+      // every read path — not just the round payload of a live handoff.
+      if (overall) this.addComment(session, { body: overall, kind: "overall" });
       const agentListening = this.agentPresent(session);
       const payload = this.reviewPayload(session, overall);
       const round: ReviewRound = {
@@ -693,8 +710,7 @@ export class LocalServer {
       // A round submitted while no agent was listening is delivered to the
       // NEXT wait immediately — feedback can be late, never lost.
       if (session.sidecar.reviews.length > session.sidecar.deliveredSeq) {
-        const last = session.sidecar.reviews[session.sidecar.reviews.length - 1]!;
-        const payload = this.reviewPayload(session, last.overallComment);
+        const payload = this.reviewPayload(session, this.pendingOverall(session));
         payload.reviewSeq = session.sidecar.reviews.length;
         session.sidecar.deliveredSeq = payload.reviewSeq;
         saveSidecar(session.path, session.sidecar);

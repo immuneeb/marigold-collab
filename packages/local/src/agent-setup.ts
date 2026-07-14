@@ -85,7 +85,10 @@ monitor.
 
    Stdout (with \`--json\`) is the review payload: \`openComments[]\` (each with
    \`id\`, \`body\`, \`anchoredText\` — the element text it's pinned to, and
-   \`replies\`), plus \`overallComment\`. Status/URL go to stderr. Exit code 2 =
+   \`replies\`), plus \`overallComment\`. Freeform feedback from the submit box
+   also appears in \`openComments\` as a doc-level entry (\`kind: "overall"\`,
+   no anchor) — address it and reply/resolve it like any other comment.
+   Status/URL go to stderr. Exit code 2 =
    timed out — re-arm the same command if the session is still live.
 
 3. **Revise.** Edit the file with targeted edits, not full rewrites — unchanged

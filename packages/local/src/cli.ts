@@ -68,7 +68,7 @@ function printReviewHuman(p: ReviewPayload): void {
   log(`\nFeedback received on ${p.file} (v${p.version}):`);
   if (p.overallComment) log(`  Overall: ${p.overallComment}`);
   for (const c of p.openComments) {
-    log(`  [${c.id}] ${c.author}${c.anchoredText ? ` on “${c.anchoredText.slice(0, 60)}”` : ""}: ${c.body}`);
+    log(`  [${c.id}] ${c.author}${c.kind === "overall" ? " (overall feedback)" : ""}${c.anchoredText ? ` on “${c.anchoredText.slice(0, 60)}”` : ""}: ${c.body}`);
     for (const r of c.replies) log(`      ↳ ${r.author}: ${r.body}`);
   }
   if (!p.openComments.length && !p.overallComment) log("  (no open comments — reviewer just signed off)");

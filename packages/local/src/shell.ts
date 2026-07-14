@@ -59,6 +59,7 @@ export function shellHtml(docId: string, title: string): string {
   .cmt-thread.draft { border-color: var(--marigold); cursor: default; }
   .cmt-anchor { font-size: 12px; color: var(--marigold-dark); background: var(--accent-soft); border-radius: 6px; padding: 4px 7px; margin-bottom: 8px; }
   .cmt-anchor .orphan { color: var(--muted); }
+  .cmt-overall { display: inline-block; font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--marigold-dark); background: var(--accent-soft); border: 1px solid var(--line); border-radius: 999px; padding: 2px 8px; margin-bottom: 6px; }
   .cmt-body { font-size: 13.5px; margin: 6px 0; }
   .cmt-body.reply { padding-left: 10px; border-left: 2px solid var(--line); }
   .cmt-author { font-weight: 600; margin-right: 6px; }
@@ -220,6 +221,7 @@ export function shellHtml(docId: string, title: string): string {
       if (c.anchor && c.anchor.marigoldId) post({ type: "scrollTo", id: c.anchor.marigoldId });
       render();
     });
+    if (c.kind === "overall") card.appendChild(el("div", "cmt-overall", "Overall feedback"));
     var quote = c.anchor && c.anchor.textQuote && c.anchor.textQuote.exact;
     if (quote) {
       var a = el("div", "cmt-anchor", "\\u201C" + quote.slice(0, 80) + "\\u201D");
@@ -622,6 +624,7 @@ export function shellHtml(docId: string, title: string): string {
       body: JSON.stringify({ overallComment: overall.value.trim() || null })
     }).then(function (resp) {
       overall.value = "";
+      refresh(); // the freeform text is now a doc-level comment — show its card
       submitState = resp.agentListening ? "revising" : "away";
       renderAgentLine();
       submitBtn.textContent = "Sent \\u2713";

@@ -105,9 +105,14 @@ describe("local review loop", () => {
     const payload = (await w.json()) as ReviewPayload;
     expect(payload.event).toBe("review.completed");
     expect(payload.overallComment).toBe("ship it");
-    expect(payload.openComments).toHaveLength(1);
-    expect(payload.openComments[0]!.anchoredText).toContain("quick brown fox");
-    expect(payload.openComments[0]!.replies).toHaveLength(1);
+    // The freeform text is ALSO a doc-level comment — durable and addressable.
+    expect(payload.openComments).toHaveLength(2);
+    const anchored = payload.openComments.find((c) => c.anchoredText)!;
+    expect(anchored.anchoredText).toContain("quick brown fox");
+    expect(anchored.replies).toHaveLength(1);
+    const overall = payload.openComments.find((c) => c.kind === "overall")!;
+    expect(overall.body).toBe("ship it");
+    expect(overall.anchoredText).toBeNull();
     // Delivered live — a fresh wait must block, not re-deliver.
     const again = await api(`/api/docs/${docId}/wait?timeout=1`);
     expect(again.status).toBe(204);
@@ -136,9 +141,13 @@ describe("local review loop", () => {
     }
     expect(after.version).toBeGreaterThan(before.version);
     const doc = (await (await api(`/api/docs/${docId}`)).json()) as {
-      comments: { status: string }[];
+      comments: { status: string; kind?: string }[];
     };
     expect(doc.comments[0]!.status).toBe("open"); // re-anchored, not orphaned
+    // Anchor-less doc-level comments are exempt from re-anchoring — never orphaned.
+    const overalls = doc.comments.filter((c) => c.kind === "overall");
+    expect(overalls.length).toBeGreaterThan(0);
+    for (const o of overalls) expect(o.status).toBe("open");
   });
 
   it("inline-edit writes through to the file", async () => {
@@ -229,6 +238,28 @@ describe("local review loop", () => {
     const caught = await readReview(stream2.body!.getReader(), 5000);
     expect(caught?.overallComment).toBe("while away");
     ac2.abort();
+  });
+
+  it("aggregates freeform text across multiple undelivered rounds", async () => {
+    // Three rounds land while no agent is listening; the catch-up wait must
+    // carry EVERY round's freeform text, not just the last round's.
+    // (The previous test's aborted listener disconnects asynchronously.)
+    for (let i = 0; i < 50; i++) {
+      const d = (await (await api(`/api/docs/${docId}`)).json()) as { agentListening: boolean };
+      if (!d.agentListening) break;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    await post(`/api/docs/${docId}/submit`, { overallComment: "first thought" });
+    await post(`/api/docs/${docId}/submit`, {});
+    await post(`/api/docs/${docId}/submit`, { overallComment: "second thought" });
+    const r = await api(`/api/docs/${docId}/wait?timeout=10`);
+    expect(r.status).toBe(200);
+    const payload = (await r.json()) as ReviewPayload;
+    expect(payload.overallComment).toBe("first thought\n\nsecond thought");
+    // …and both texts are open doc-level comments in the same payload.
+    const bodies = payload.openComments.filter((c) => c.kind === "overall").map((c) => c.body);
+    expect(bodies).toContain("first thought");
+    expect(bodies).toContain("second thought");
   });
 
   it("wraps fragments and unwraps them on inline-edit write-back", async () => {
