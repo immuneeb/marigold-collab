@@ -154,11 +154,21 @@ const CLAUDE_MD_BLOCK = `${CLAUDE_MD_START}
 When you finish something the user should review — a plan, report, analysis,
 spec, mockup, diagram, or a set of options — don't paste it into chat. Write
 it as one self-contained HTML page and open it in the local review shell via
-the marigold-draft skill (\`marigold-draft open <file> --json\`). The user
-comments on the rendered page and hits "Send feedback to agent"; the feedback
-returns to you as JSON; revise and repeat. Chat stays for conversation and
-quick answers — reviewable artifacts go through Marigold Draft. Full loop:
-the marigold-draft skill, or \`marigold-draft help\`.
+the marigold-draft skill. The user comments on the rendered page and hits
+"Send feedback to agent"; the feedback returns to you as JSON; revise and
+repeat. Chat stays for conversation and quick answers — reviewable artifacts
+go through Marigold Draft.
+
+Stay reachable the whole session: if your harness has a persistent background
+monitor, run \`marigold-draft listen\` under it ONCE (one stream covers every
+draft, and wakes you on each submit). Otherwise run
+\`marigold-draft open <file> --json --timeout 570\` as a background task and
+RE-ARM it every time it exits (exit code 2 = timeout — re-arm, don't stop).
+A blocking wait covers only that one doc: with several drafts under review,
+prefer \`listen\`. Feedback submitted while nothing is listening is saved
+durably but reaches you only on your next open/listen — so never leave the
+loop unarmed while the user may still be commenting. Full loop: the
+marigold-draft skill, or \`marigold-draft help\`.
 ${CLAUDE_MD_END}`;
 
 /**
