@@ -240,6 +240,79 @@ describe("local review loop", () => {
     ac2.abort();
   });
 
+  it("scoped listen: only covered drafts wake the listener; presence is per-doc", async () => {
+    async function readReviews(
+      reader: ReadableStreamDefaultReader<Uint8Array>,
+      timeoutMs: number,
+    ): Promise<Record<string, unknown>[]> {
+      const dec = new TextDecoder();
+      const out: Record<string, unknown>[] = [];
+      let buf = "";
+      let event = "";
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline) {
+        const chunk = (await Promise.race([
+          reader.read(),
+          new Promise<null>((r) => setTimeout(() => r(null), Math.max(1, deadline - Date.now()))),
+        ])) as { done: boolean; value?: Uint8Array } | null;
+        if (!chunk || chunk.done) break;
+        buf += dec.decode(chunk.value, { stream: true });
+        let i: number;
+        while ((i = buf.indexOf("\n")) >= 0) {
+          const line = buf.slice(0, i).trimEnd();
+          buf = buf.slice(i + 1);
+          if (line.startsWith("event: ")) event = line.slice(7);
+          else if (line.startsWith("data: ")) {
+            if (event === "review") out.push(JSON.parse(line.slice(6)) as Record<string, unknown>);
+            event = "";
+          }
+        }
+      }
+      return out;
+    }
+
+    // Two "sessions": each with its own drafts dir.
+    const dirA = mkdtempSync(join(tmpdir(), "mgl-sess-a-"));
+    const dirB = mkdtempSync(join(tmpdir(), "mgl-sess-b-"));
+    const fileA = join(dirA, "a.html");
+    const fileB = join(dirB, "b.html");
+    writeFileSync(fileA, "<h1>Session A draft</h1>");
+    writeFileSync(fileB, "<h1>Session B draft</h1>");
+    const docA = ((await (await post("/api/open", { path: fileA })).json()) as { docId: string }).docId;
+    const docB = ((await (await post("/api/open", { path: fileB })).json()) as { docId: string }).docId;
+
+    // Listener scoped to session A's dir (dir prefix covers files inside it).
+    const ac = new AbortController();
+    const stream = await fetch(`${base}/api/agent/listen?scope=${encodeURIComponent(dirA)}`, { signal: ac.signal });
+    expect(stream.ok).toBe(true);
+    const reader = stream.body!.getReader();
+
+    // Presence is per-doc: A shows an agent, B does not.
+    const dA = (await (await api(`/api/docs/${docA}`)).json()) as { agentListening: boolean };
+    const dB = (await (await api(`/api/docs/${docB}`)).json()) as { agentListening: boolean };
+    expect(dA.agentListening).toBe(true);
+    expect(dB.agentListening).toBe(false);
+
+    // A round on B must NOT reach the A-scoped listener…
+    const subB = await post(`/api/docs/${docB}/submit`, { overallComment: "for session B" });
+    expect(((await subB.json()) as { agentListening: boolean }).agentListening).toBe(false);
+    // …but a round on A must.
+    await post(`/api/docs/${docA}/submit`, { overallComment: "for session A" });
+    const got = await readReviews(reader, 1500);
+    expect(got.map((r) => r.overallComment)).toEqual(["for session A"]);
+    ac.abort();
+    await new Promise((r) => setTimeout(r, 150));
+
+    // B's round was durably parked (undelivered) — a B-scoped listener catches
+    // it up on connect and never sees A's already-delivered round.
+    const ac2 = new AbortController();
+    const stream2 = await fetch(`${base}/api/agent/listen?scope=${encodeURIComponent(fileB)}`, { signal: ac2.signal });
+    const caught = await readReviews(stream2.body!.getReader(), 1500);
+    expect(caught.map((r) => r.overallComment)).toEqual(["for session B"]);
+    ac2.abort();
+    await new Promise((r) => setTimeout(r, 150));
+  }, 15000);
+
   it("aggregates freeform text across multiple undelivered rounds", async () => {
     // Three rounds land while no agent is listening; the catch-up wait must
     // carry EVERY round's freeform text, not just the last round's.

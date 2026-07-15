@@ -87,7 +87,9 @@ revisions there exactly as they do locally.
 ```
 open <file>       serve + open in browser, wait for feedback
                   --json --no-browser --no-wait --timeout <s> --title <t>
-listen            stream every submitted round as JSON lines (all drafts);
+listen [path…]    stream submitted rounds as JSON lines; path args (files
+                  and/or dirs) scope it to those drafts — scope it when
+                  parallel agent sessions run at once (no paths = all drafts);
                   reconnects forever — run under a persistent monitor
 share <file>      publish to hosted Marigold + print a share link and claim link
                   --title <t> --origin <url> (default marigold.page)

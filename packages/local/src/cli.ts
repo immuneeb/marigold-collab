@@ -11,6 +11,7 @@
  *   marigold-local start [--port N] | status | stop | mcp
  */
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { resolve as resolvePath } from "node:path";
 import {
   DEFAULT_PORT,
   ensureServer,
@@ -137,21 +138,27 @@ async function share(positional: string[], flags: Record<string, string | boolea
 }
 
 /**
- * `listen` — hold one long-lived SSE stream covering every draft and print
- * each submitted review round as a single JSON line on stdout. Designed to
- * run under a persistent monitor (agent harness) or any supervisor: it
- * reconnects forever, restarting the daemon if needed, and the daemon counts
- * the connection as agent presence (tabs show "● Agent connected").
+ * `listen [paths…]` — hold one long-lived SSE stream and print each submitted
+ * review round as a single JSON line on stdout. Path arguments (draft files
+ * and/or directories) scope the stream to just those drafts, so parallel
+ * agent sessions listening at once don't wake each other; with no paths it
+ * covers every draft. Designed to run under a persistent monitor (agent
+ * harness) or any supervisor: it reconnects forever, restarting the daemon if
+ * needed, and the daemon counts the connection as agent presence for covered
+ * docs (tabs show "● Agent connected").
  */
-async function listen(): Promise<never> {
+async function listen(paths: string[]): Promise<never> {
+  const scopes = paths.map((p) => resolvePath(p));
+  const qs = scopes.map((s) => `scope=${encodeURIComponent(s)}`).join("&");
   let announced = false;
   for (;;) {
     try {
       const port = await ensureServer();
-      const resp = await fetch(`http://127.0.0.1:${port}/api/agent/listen`);
+      const resp = await fetch(`http://127.0.0.1:${port}/api/agent/listen${qs ? `?${qs}` : ""}`);
       if (resp.ok && resp.body) {
         if (!announced) {
-          log(`listening for review rounds on http://127.0.0.1:${port} (all drafts)`);
+          const what = scopes.length ? `scoped to: ${scopes.join(", ")}` : "all drafts";
+          log(`listening for review rounds on http://127.0.0.1:${port} (${what})`);
           announced = true;
         }
         const reader = resp.body.getReader();
@@ -237,7 +244,7 @@ async function main(): Promise<void> {
       return;
 
     case "listen":
-      await listen();
+      await listen(positional);
       return;
 
     case "share":
@@ -328,8 +335,12 @@ async function main(): Promise<void> {
                    --no-wait      register + open, return immediately
                    --timeout <s>  give up waiting after s seconds
                    --title <t>    set the doc title
-  listen           stream every submitted review round as JSON lines (all drafts);
-                   reconnects forever — run under a persistent monitor/supervisor
+  listen [path…]   stream submitted review rounds as JSON lines; path args
+                   (draft files and/or directories) scope the stream to those
+                   drafts — ALWAYS scope when parallel agent sessions may be
+                   listening, or every session wakes on every doc's feedback.
+                   No paths = all drafts. Reconnects forever — run under a
+                   persistent monitor/supervisor
   share <file>     publish the draft to hosted Marigold (no account needed) and
                    print a share link (anyone with it can view + comment) and a
                    claim link (sign in to keep it and control access)

@@ -146,12 +146,21 @@ async function readBody(req: http.IncomingMessage): Promise<Record<string, unkno
   }
 }
 
+/** A listener's scope: absolute file/dir paths it covers, or null = every
+ * draft. Parallel agent sessions each scope their `listen` to their own
+ * drafts so one doc's feedback doesn't wake every session. */
+function scopeCovers(scopes: string[] | null, docPath: string): boolean {
+  if (scopes === null) return true;
+  return scopes.some((s) => docPath === s || docPath.startsWith(s + "/"));
+}
+
 export class LocalServer {
   private byId = new Map<string, DocSession>();
   private byPath = new Map<string, DocSession>();
-  /** Long-lived agent subscriptions (`marigold-draft listen`) — one stream
-   * covers every draft. Presence for tabs = doc waiters OR any listener. */
-  private agentListeners = new Set<http.ServerResponse>();
+  /** Long-lived agent subscriptions (`marigold-draft listen`), each with its
+   * scope (null = all drafts). Presence for a doc = its waiters OR any
+   * listener whose scope covers it. */
+  private agentListeners = new Map<http.ServerResponse, string[] | null>();
   readonly server: http.Server;
   private opts: Required<LocalServerOptions>;
   port = 0;
@@ -186,7 +195,7 @@ export class LocalServer {
   }
 
   close(): void {
-    for (const l of this.agentListeners) l.end();
+    for (const l of this.agentListeners.keys()) l.end();
     this.agentListeners.clear();
     for (const s of this.byId.values()) {
       s.watcher?.close();
@@ -319,7 +328,11 @@ export class LocalServer {
   }
 
   private agentPresent(session: DocSession): boolean {
-    return session.waiters.size > 0 || this.agentListeners.size > 0;
+    if (session.waiters.size > 0) return true;
+    for (const scopes of this.agentListeners.values()) {
+      if (scopeCovers(scopes, session.path)) return true;
+    }
+    return false;
   }
 
   /** Tell open tabs whether an agent is reachable (blocked on /wait or holding
@@ -471,22 +484,27 @@ export class LocalServer {
       return;
     }
 
-    // Long-lived agent stream: one connection covers every draft. Each
-    // submitted round arrives as an SSE `review` event; rounds submitted while
-    // nothing was listening are caught up on connect. This is what
-    // `marigold-draft listen` (run under a persistent monitor) consumes.
+    // Long-lived agent stream. Each submitted round arrives as an SSE `review`
+    // event; rounds submitted while nothing was listening are caught up on
+    // connect. This is what `marigold-draft listen` (run under a persistent
+    // monitor) consumes. `?scope=<abs path>` (repeatable; file or dir prefix)
+    // restricts the stream to those drafts so parallel agent sessions don't
+    // wake each other; no scope = every draft.
     if (p === "/api/agent/listen" && method === "GET") {
+      const rawScopes = url.searchParams.getAll("scope");
+      const scopes = rawScopes.length ? rawScopes.map((s) => resolvePath(s).replace(/\/+$/, "")) : null;
       res.writeHead(200, {
         "content-type": "text/event-stream",
         "cache-control": "no-store",
         connection: "keep-alive",
       });
-      res.write(`event: hello\ndata: {"docs":${this.byId.size}}\n\n`);
-      this.agentListeners.add(res);
+      res.write(`event: hello\ndata: ${JSON.stringify({ docs: this.byId.size, scopes })}\n\n`);
+      this.agentListeners.set(res, scopes);
       this.broadcastAgentPresenceAll();
-      // Catch up on every known draft's pending rounds — including docs the
+      // Catch up on every covered draft's pending rounds — including docs the
       // daemon hasn't loaded this lifetime (registry-wide sweep).
-      for (const docId of Object.keys(registryLoad())) {
+      for (const [docId, entry] of Object.entries(registryLoad())) {
+        if (!scopeCovers(scopes, entry.path)) continue;
         const session = this.resolveSession(docId);
         if (session) this.emitPendingTo(session, res);
       }
@@ -696,8 +714,8 @@ export class LocalServer {
         }
         session.waiters.clear();
       } else {
-        for (const l of this.agentListeners) {
-          l.write(`event: review\ndata: ${JSON.stringify(payload)}\n\n`);
+        for (const [l, scopes] of this.agentListeners) {
+          if (scopeCovers(scopes, session.path)) l.write(`event: review\ndata: ${JSON.stringify(payload)}\n\n`);
         }
       }
       this.broadcastAgentPresence(session);

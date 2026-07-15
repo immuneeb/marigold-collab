@@ -43,19 +43,29 @@ the daemon when done — other drafts may be using it.
 
 If your harness has a persistent/long-running monitor primitive (e.g. Claude
 Code's Monitor tool with \`persistent: true\`), start ONE listener at the start
-of a review session and leave it running:
+of a review session and leave it running — **scoped to where THIS session's
+drafts live** (a directory covers drafts you create there later; you can also
+list files):
 
 \`\`\`sh
-marigold-draft listen
+marigold-draft listen <drafts-dir-or-files…>
 \`\`\`
 
-It holds a single stream covering every draft: each time the user clicks
-"Send feedback to agent", one JSON line (the review round — same shape as
-\`open --json\`) appears on stdout and wakes you. It reconnects forever,
-restarts the daemon if needed, catches up rounds submitted while nothing was
-listening, and keeps the tab's "● Agent connected" indicator truthful. With a
-listener running you do NOT need blocking \`open\` waits — use
-\`open --no-wait\` just to register/open drafts.
+Scoping matters: the daemon is shared machine-wide, and an unscoped
+\`marigold-draft listen\` receives EVERY draft's feedback — with several agent
+sessions running in parallel, one user comment would wake all of them and
+burn tokens in sessions it doesn't concern. So keep each session's drafts in
+one session-specific directory (e.g. your scratchpad dir) and scope the
+listener to it. Bare \`listen\` (all drafts) is only for a machine-wide
+dedicated review session.
+
+Each time the user clicks "Send feedback to agent" on a covered draft, one
+JSON line (the review round — same shape as \`open --json\`) appears on stdout
+and wakes you. It reconnects forever, restarts the daemon if needed, catches
+up rounds submitted while nothing was listening, and keeps the tab's
+"● Agent connected" indicator truthful. With a listener running you do NOT
+need blocking \`open\` waits — use \`open --no-wait\` just to register/open
+drafts.
 
 Only fall back to the blocking-wait loop below if you cannot run a persistent
 monitor.
@@ -72,8 +82,10 @@ monitor.
    fragment/SVG — those get a neutral wrapper automatically). External
    scripts/fonts/images are blocked by CSP (matching cloud Marigold), so inline
    everything; images as \`data:\` URIs. Keep drafts the user will iterate on in
-   \`~/.marigold-local/drafts/\` or the project dir — the file path is the doc's
-   identity.
+   a directory specific to this session (your scratchpad dir, or a
+   session-named subdir of \`~/.marigold-local/drafts/\` or the project dir) —
+   the file path is the doc's identity, and a per-session directory is what
+   lets you scope your listener so parallel sessions don't wake each other.
 
 2. **Open it** — with a listener running: \`marigold-draft open <file> --no-wait\`.
    Fallback (no persistent monitor): block for feedback as a background process
@@ -160,15 +172,19 @@ repeat. Chat stays for conversation and quick answers — reviewable artifacts
 go through Marigold Draft.
 
 Stay reachable the whole session: if your harness has a persistent background
-monitor, run \`marigold-draft listen\` under it ONCE (one stream covers every
-draft, and wakes you on each submit). Otherwise run
-\`marigold-draft open <file> --json --timeout 570\` as a background task and
-RE-ARM it every time it exits (exit code 2 = timeout — re-arm, don't stop).
-A blocking wait covers only that one doc: with several drafts under review,
-prefer \`listen\`. Feedback submitted while nothing is listening is saved
-durably but reaches you only on your next open/listen — so never leave the
-loop unarmed while the user may still be commenting. Full loop: the
-marigold-draft skill, or \`marigold-draft help\`.
+monitor, run \`marigold-draft listen <this-session's-drafts-dir>\` under it
+ONCE (one stream covers every draft under that directory — created later too —
+and wakes you on each submit). ALWAYS scope the listener to where this
+session's drafts live: the daemon is shared machine-wide, and an unscoped
+\`listen\` wakes on every draft's feedback, so parallel agent sessions would
+wake each other and burn tokens on the wrong task. If there's no persistent
+monitor, run \`marigold-draft open <file> --json --timeout 570\` as a
+background task and RE-ARM it every time it exits (exit code 2 = timeout —
+re-arm, don't stop). A blocking wait covers only that one doc: with several
+drafts under review, prefer \`listen\`. Feedback submitted while nothing is
+listening is saved durably but reaches you only on your next open/listen — so
+never leave the loop unarmed while the user may still be commenting. Full
+loop: the marigold-draft skill, or \`marigold-draft help\`.
 ${CLAUDE_MD_END}`;
 
 /**
@@ -200,9 +216,12 @@ wall of text into chat.
 
 When asked to "spin up marigold draft" (or for a local commentable draft):
 1. If your harness supports a persistent background monitor, start
-   \`marigold-draft listen\` under it once — each user "Send feedback to agent"
-   prints one JSON review round on stdout and wakes you. Then open drafts with
-   \`marigold-draft open <file> --no-wait\`.
+   \`marigold-draft listen <this-session's-drafts-dir>\` under it once — each
+   user "Send feedback to agent" on a draft under that directory prints one
+   JSON review round on stdout and wakes you. Then open drafts with
+   \`marigold-draft open <file> --no-wait\`. Always scope the listener (dir or
+   files): unscoped \`listen\` receives every draft's feedback machine-wide,
+   so parallel agent sessions would wake each other.
 2. Otherwise: run \`marigold-draft principles [mode]\` and follow it to write
    the self-contained HTML file (inline all CSS/JS/SVG), then run
    \`marigold-draft open <file> --json --timeout 570\` in the background — it
