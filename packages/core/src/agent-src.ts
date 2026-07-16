@@ -222,7 +222,19 @@ export const ANCHOR_AGENT_JS = String.raw`(function () {
     }
   }, { capture: true });
   document.addEventListener("pointercancel", function (e) {
-    if (e.pointerId === tapId) { tapId = null; selecting = false; }
+    if (e.pointerId !== tapId) return;
+    var moved = tapMoved, type = tapType, x = tapX, y = tapY;
+    tapId = null; selecting = false;
+    // Real iOS can still claim an armed tap as a native gesture (loupe /
+    // long-press heuristics run in the UI process, beyond what user-select
+    // suppresses) and deliver pointercancel instead of pointerup. With comment
+    // mode armed, an unmoved touch is unambiguous intent — place the comment
+    // at the touch point instead of silently dropping it. Movement still
+    // means scroll, never a placement.
+    if (commentMode && !moved && type !== "mouse") {
+      var t = document.elementFromPoint(x, y) || e.target;
+      if (t) handleTap(t, x, y, null);
+    }
   }, { capture: true, passive: true });
 
   // ── in-place editing: double-click → contentEditable, blur = auto-save ──
