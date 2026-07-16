@@ -416,6 +416,21 @@ export const ANCHOR_AGENT_JS = String.raw`(function () {
     showControlsFor(el);
   }, { passive: true });
 
+  // Arming comment mode must also suspend native touch text-selection: iOS
+  // otherwise claims a tap on a paragraph as a selection/callout gesture and
+  // fires pointercancel instead of pointerup, so handleTap never runs and the
+  // tap "does nothing" (pointerdown is passive — we can't preventDefault there).
+  // touch-action:manipulation keeps scrolling working while armed but drops
+  // double-tap-zoom, whose detection delay can also swallow the tap.
+  function setCommentModeUI(on) {
+    var s = document.documentElement.style;
+    s.cursor = on ? "crosshair" : "";
+    s.webkitUserSelect = on ? "none" : "";
+    s.userSelect = on ? "none" : "";
+    s.webkitTouchCallout = on ? "none" : "";
+    s.touchAction = on ? "manipulation" : "";
+  }
+
   // A tap resolved from a pointerup (touch/pen) or a mouse click. Comment mode
   // anchors a comment where you tapped; otherwise a tap on editable text starts
   // an in-place edit (beginEdit reveals the block controls on coarse pointers).
@@ -427,7 +442,7 @@ export const ANCHOR_AGENT_JS = String.raw`(function () {
     if (commentMode) {
       if (ev) { ev.preventDefault(); ev.stopPropagation(); }
       commentMode = false;
-      document.documentElement.style.cursor = "";
+      setCommentModeUI(false);
       send({ type: "placed", anchor: anchorFor(target, null), point: { x: x, y: y } });
       return true;
     }
@@ -589,7 +604,7 @@ export const ANCHOR_AGENT_JS = String.raw`(function () {
     if (!d || d[MG] !== 1) return;
     if (d.type === "track") { tracked = d.ids || []; reportRects(); }
     else if (d.type === "getRects") { reportRects(); }
-    else if (d.type === "commentMode") { commentMode = !!d.on; document.documentElement.style.cursor = commentMode ? "crosshair" : ""; if (commentMode) hideControls(); }
+    else if (d.type === "commentMode") { commentMode = !!d.on; setCommentModeUI(commentMode); if (commentMode) hideControls(); }
     else if (d.type === "editable") { editEnabled = !!d.on; if (!d.on) { endEdit(false); hideControls(); } }
     else if (d.type === "clearSelection") { try { window.getSelection().removeAllRanges(); } catch (err) {} lastSelKey = ""; }
     else if (d.type === "scrollTo") { var el = elFor(d.id); if (el) el.scrollIntoView({ block: "center", behavior: "smooth" }); }
