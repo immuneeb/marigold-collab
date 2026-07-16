@@ -32,6 +32,26 @@ function log(msg: string): void {
   process.stderr.write(msg + "\n");
 }
 
+// ── ANSI styling (guidelines/cli.html) ──────────────────────────────────────
+// Status only ever paints stderr (stdout stays clean for --json / links / the
+// status JSON). Brand mapping: success green ✓ · active/waiting yellow ● (the
+// terminal's marigold) · errors red ✗ · meta dim. Paths and values are never
+// colored — they read as bright default-fg. Honors NO_COLOR and non-TTY.
+const ANSI = { reset: "\x1b[0m", bold: "\x1b[1m", dim: "\x1b[2m", green: "\x1b[32m", yellow: "\x1b[33m", red: "\x1b[31m" };
+function colorOn(): boolean {
+  return !process.env.NO_COLOR && !!process.stderr.isTTY;
+}
+function paint(code: string, s: string): string {
+  return colorOn() ? code + s + ANSI.reset : s;
+}
+const ok = (s: string) => paint(ANSI.green, s); // success ✓
+const warn = (s: string) => paint(ANSI.yellow, s); // active/waiting ●
+const err = (s: string) => paint(ANSI.red, s); // error ✗
+const dim = (s: string) => paint(ANSI.dim, s); // meta
+const bold = (s: string) => paint(ANSI.bold, s);
+// Status glyphs match the GUI.
+const G = { ok: "✓", wait: "●", off: "○", err: "✗" }; // ✓ ● ○ ✗
+
 function parseArgs(argv: string[]): { cmd: string; positional: string[]; flags: Record<string, string | boolean> } {
   const [cmd = "help", ...rest] = argv;
   const positional: string[] = [];
@@ -55,7 +75,7 @@ async function serve(flags: Record<string, string | boolean>): Promise<void> {
   const port = await server.listen(Number(flags.port ?? DEFAULT_PORT));
   mkdirSync(STATE_DIR, { recursive: true });
   writeFileSync(STATE_FILE, JSON.stringify({ port, pid: process.pid, startedAt: server.startedAt } satisfies ServerState, null, 2));
-  log(`marigold-draft serving on http://127.0.0.1:${port} (pid ${process.pid})`);
+  log(`${ok(G.ok)} serving on http://127.0.0.1:${port}  ${dim(`(pid ${process.pid})`)}`);
   const bye = () => {
     const s = readState();
     if (s?.pid === process.pid) rmSync(STATE_FILE, { force: true });
@@ -66,13 +86,13 @@ async function serve(flags: Record<string, string | boolean>): Promise<void> {
 }
 
 function printReviewHuman(p: ReviewPayload): void {
-  log(`\nFeedback received on ${p.file} (v${p.version}):`);
+  log(`\n${ok(G.ok)} feedback received on ${p.file}  ${dim(`(v${p.version})`)}`);
   if (p.overallComment) log(`  Overall: ${p.overallComment}`);
   for (const c of p.openComments) {
     log(`  [${c.id}] ${c.author}${c.kind === "overall" ? " (overall feedback)" : ""}${c.anchoredText ? ` on “${c.anchoredText.slice(0, 60)}”` : ""}: ${c.body}`);
     for (const r of c.replies) log(`      ↳ ${r.author}: ${r.body}`);
   }
-  if (!p.openComments.length && !p.overallComment) log("  (no open comments — reviewer just signed off)");
+  if (!p.openComments.length && !p.overallComment) log(dim("  (no open comments — the reviewer just signed off)"));
 }
 
 async function open(positional: string[], flags: Record<string, string | boolean>): Promise<void> {
@@ -80,7 +100,7 @@ async function open(positional: string[], flags: Record<string, string | boolean
   if (!file) throw new Error("usage: marigold-draft open <file.html> [--json] [--no-browser] [--no-wait] [--timeout <s>]");
   const port = await ensureServer(flags.port ? Number(flags.port) : undefined);
   const doc = await registerDoc(port, file, typeof flags.title === "string" ? flags.title : undefined);
-  log(`${doc.url}  (v${doc.version})`);
+  log(`${ok(G.ok)} serving ${doc.url}  ${dim(`(v${doc.version})`)}`);
 
   // A connected tab live-reloads on file changes — don't stack up new tabs.
   if (!flags["no-browser"] && doc.connectedClients === 0) openBrowser(doc.url);
@@ -88,11 +108,11 @@ async function open(positional: string[], flags: Record<string, string | boolean
 
   const budgetS = flags.timeout ? Number(flags.timeout) : Infinity;
   const deadline = Date.now() + budgetS * 1000;
-  log("Waiting for the reviewer to send feedback… (Ctrl-C to stop waiting)");
+  log(`${warn(G.wait)} waiting for feedback…  ${dim("(Ctrl-C to stop waiting)")}`);
   for (;;) {
     const remaining = (deadline - Date.now()) / 1000;
     if (remaining <= 0) {
-      log("Timed out waiting for feedback.");
+      log(dim("timed out waiting for feedback"));
       process.exit(2);
     }
     const chunk = Math.min(25, Math.ceil(remaining));
@@ -129,8 +149,8 @@ async function share(positional: string[], flags: Record<string, string | boolea
     process.stdout.write(formatShareResult(result) + "\n");
   } catch (e) {
     if (e instanceof ShareError) {
-      log(`error: ${e.message}`);
-      if (e.hint) log(`hint: ${e.hint}`);
+      log(`${err(G.err)} ${e.message}`);
+      if (e.hint) log(dim(`hint: ${e.hint}`));
       process.exit(1);
     }
     throw e;
@@ -158,7 +178,7 @@ async function listen(paths: string[]): Promise<never> {
       if (resp.ok && resp.body) {
         if (!announced) {
           const what = scopes.length ? `scoped to: ${scopes.join(", ")}` : "all drafts";
-          log(`listening for review rounds on http://127.0.0.1:${port} (${what})`);
+          log(`${warn(G.wait)} listening for review rounds on http://127.0.0.1:${port}  ${dim(`(${what})`)}`);
           announced = true;
         }
         const reader = resp.body.getReader();
@@ -184,7 +204,7 @@ async function listen(paths: string[]): Promise<never> {
     } catch {
       /* daemon restarting or unreachable — retry below */
     }
-    log("listen stream closed — reconnecting…");
+    log(dim("listen stream closed — reconnecting…"));
     await new Promise((r) => setTimeout(r, 1500));
   }
 }
@@ -235,7 +255,7 @@ async function main(): Promise<void> {
 
     case "start": {
       const port = await ensureServer(flags.port ? Number(flags.port) : undefined);
-      log(`marigold-draft running on http://127.0.0.1:${port}`);
+      log(`${ok(G.ok)} running on http://127.0.0.1:${port}`);
       return;
     }
 
@@ -259,10 +279,10 @@ async function main(): Promise<void> {
       else {
         const cs = data.comments as { id: string; parentId: string | null; author: string; body: string; status: string }[];
         for (const c of cs.filter((c) => !c.parentId)) {
-          log(`[${c.id}] (${c.status}) ${c.author}: ${c.body}`);
+          log(`[${c.id}] ${dim(`(${c.status})`)} ${c.author}: ${c.body}`);
           for (const rp of cs.filter((x) => x.parentId === c.id)) log(`    ↳ ${rp.author}: ${rp.body}`);
         }
-        if (!cs.length) log("no comments yet");
+        if (!cs.length) log(dim("no comments yet"));
       }
       return;
     }
@@ -278,7 +298,7 @@ async function main(): Promise<void> {
         body: JSON.stringify({ body, viaAssistant: true, author: "AI" }),
       });
       if (!r.ok) throw new Error(`reply failed (${r.status})`);
-      log(`replied to ${commentId}`);
+      log(`${ok(G.ok)} replied to ${commentId}`);
       return;
     }
 
@@ -293,14 +313,14 @@ async function main(): Promise<void> {
         body: JSON.stringify({ status: cmd === "resolve" ? "resolved" : "open" }),
       });
       if (!r.ok) throw new Error(`${cmd} failed (${r.status})`);
-      log(`${cmd}d ${commentId}`);
+      log(`${ok(G.ok)} ${cmd}d ${commentId}`);
       return;
     }
 
     case "status": {
       const state = readState();
       if (!state || !(await ping(state.port))) {
-        log("not running");
+        log(dim(`${G.off} not running`));
         process.exit(1);
       }
       const r = await fetch(`http://127.0.0.1:${state.port}/api/status`);
@@ -322,12 +342,12 @@ async function main(): Promise<void> {
         }
         rmSync(STATE_FILE, { force: true });
       }
-      log("stopped");
+      log(`${ok(G.ok)} stopped`);
       return;
     }
 
     default:
-      log(`marigold-draft — local Marigold review loop for agent-authored HTML/SVG
+      log(`${warn(":: ·")}  ${bold("marigold-draft")} — local Marigold review loop for agent-authored HTML/SVG
 
   open <file>      open a draft in the browser and wait for feedback
                    --json         print the feedback payload as JSON (stdout)
@@ -366,6 +386,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((e: Error) => {
-  log(`error: ${e.message}`);
+  log(`${err(G.err)} ${e.message}`);
   process.exit(1);
 });

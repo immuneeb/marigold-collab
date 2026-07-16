@@ -40,15 +40,15 @@ async function open(file: string, title?: string, browser = true) {
 }
 
 const DIGEST = `marigold-draft: a localhost review loop for rich HTML/SVG drafts.
-Workflow: create_draft (or open_draft on an existing file) → the doc opens in
-the user's browser → get_feedback with waitSeconds to block until they hit
-"Send feedback to agent" → revise with update_draft (the tab live-reloads,
-comments re-anchor) → reply_to_comment + resolve_comment → get_feedback again
-for the next round. Drafts are plain HTML: full documents or fragments (and
-.svg), self-contained (external network is blocked by CSP, matching cloud
-Marigold). Before authoring, call start_analysis (pass mode: analyze | learn |
-judge | decide | organize | tune | do | track — pick by what the session must
-produce) and follow the returned methodology + posture pack.`;
+Workflow: create_draft (or open_draft on an existing file) → the draft opens in
+the reviewer's browser → get_feedback with waitSeconds to block until they hit
+"Send feedback to agent" → revise with update_draft (the reviewer's tab
+live-reloads, comments re-anchor) → reply_to_comment + resolve_comment →
+get_feedback again for the next round. Drafts are plain HTML: full documents or
+fragments (and .svg), self-contained (external network is blocked by CSP,
+matching cloud Marigold). Before authoring, call start_analysis (pass mode:
+analyze | learn | judge | decide | organize | tune | do | track — pick by what
+the session must produce) and follow the returned methodology + posture pack.`;
 
 export async function runMcp(): Promise<void> {
   const server = new McpServer(
@@ -61,7 +61,7 @@ export async function runMcp(): Promise<void> {
     {
       title: "Start a Marigold analysis",
       description:
-        "Load the Marigold Way before authoring a draft — the first-principles method, doc structure guide, and a mode posture pack for what the session must produce. Call this FIRST when asked to analyze, explain, teach, or build an interactive draft, then follow the returned method.",
+        "load the Marigold Way before authoring a draft — the first-principles method, doc structure guide, and a mode posture pack for what the session must produce. Call this first when asked to analyze, explain, teach, or build an interactive draft, then follow the returned method.",
       inputSchema: {
         topic: z.string().optional().describe("The topic, if known"),
         mode: z
@@ -82,7 +82,7 @@ export async function runMcp(): Promise<void> {
     {
       title: "Create draft",
       description:
-        "Write a new HTML/SVG draft to disk and open it in the user's browser for review. Returns the file path — pass it to every other tool. Use update_draft for revisions.",
+        "write a new HTML/SVG draft to disk and open it in the reviewer's browser. Returns the file path — pass it to every other tool. Use update_draft for revisions.",
       inputSchema: {
         html: z.string().describe("Full HTML document, fragment, or SVG markup"),
         title: z.string().optional().describe("Doc title (also names the file)"),
@@ -107,7 +107,7 @@ export async function runMcp(): Promise<void> {
     "open_draft",
     {
       title: "Open draft",
-      description: "Open an existing .html/.htm/.svg file in the review shell (starts the daemon if needed).",
+      description: "open an existing .html/.htm/.svg draft in the review shell (starts the daemon if needed).",
       inputSchema: {
         path: z.string().describe("Path to the file"),
         title: z.string().optional(),
@@ -128,7 +128,7 @@ export async function runMcp(): Promise<void> {
     {
       title: "Update draft",
       description:
-        "Replace the draft's content with revised HTML. The open tab live-reloads and existing comments re-anchor (keep the DOM structure stable where you can).",
+        "replace the draft's content with revised HTML. The reviewer's open tab live-reloads and existing comments re-anchor (keep the DOM structure stable where you can).",
       inputSchema: {
         path: z.string(),
         html: z.string(),
@@ -154,7 +154,7 @@ export async function runMcp(): Promise<void> {
     {
       title: "Get feedback",
       description:
-        "Read the draft's comments. With waitSeconds > 0, blocks until the reviewer clicks \"Send feedback to agent\" (or the wait times out) and returns the review round — use this after creating/updating a draft to wait for the human.",
+        "read the draft's comments. With waitSeconds > 0, wait for the reviewer to send feedback (or time out) and return the review round — use this after creating or updating a draft to wait for the reviewer.",
       inputSchema: {
         path: z.string(),
         waitSeconds: z
@@ -195,7 +195,7 @@ export async function runMcp(): Promise<void> {
     "reply_to_comment",
     {
       title: "Reply to comment",
-      description: "Reply to a comment thread (badged AI in the shell). Say what you changed before resolving.",
+      description: "reply in a comment thread — shown with the AI badge. Say what you changed before resolving.",
       inputSchema: {
         path: z.string(),
         commentId: z.string(),
@@ -222,7 +222,7 @@ export async function runMcp(): Promise<void> {
     "resolve_comment",
     {
       title: "Resolve comment",
-      description: "Mark a comment thread resolved (or reopen it).",
+      description: "mark a comment thread resolved, or reopen it.",
       inputSchema: {
         path: z.string(),
         commentId: z.string(),
@@ -249,7 +249,7 @@ export async function runMcp(): Promise<void> {
     "read_draft",
     {
       title: "Read draft",
-      description: "Read the draft's current HTML source from disk (e.g. before an update_draft revision).",
+      description: "read the draft's current HTML source from disk (e.g. before an update_draft revision).",
       inputSchema: { path: z.string() },
     },
     async ({ path }) => {
