@@ -69,7 +69,10 @@ export function shellHtml(docId: string, title: string): string {
   .doc-pane { position: relative; flex: 1; min-width: 0; background: var(--white); }
   .docframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: #fff; }
   .overlay { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
-  .hl { position: absolute; pointer-events: none; background: rgba(250, 240, 220, 0.45); border-bottom: 1.5px solid var(--tint-strong); border-radius: 2px; transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease); }
+  /* Highlights overlay the doc iframe, so they must never occlude its text:
+     multiply blending darkens the backdrop toward the tint instead of painting
+     over it — ink text underneath stays fully legible in both states. */
+  .hl { position: absolute; pointer-events: none; background: rgba(250, 240, 220, 0.45); mix-blend-mode: multiply; border-bottom: 1.5px solid var(--tint-strong); border-radius: 2px; transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease); }
   .hl.sel { background: var(--tint); border-bottom: 2px solid var(--marigold); }
   .pin { position: absolute; pointer-events: auto; width: 26px; height: 26px; padding: 0; font: 600 12px/26px var(--font-sans); text-align: center; color: var(--marigold-deep); border-radius: 13px 13px 13px 3px; border: 1px solid var(--marigold); background: #fff; box-shadow: var(--shadow-pin); cursor: pointer; transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease); }
   .pin:hover { background: var(--tint); }
