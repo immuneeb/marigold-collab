@@ -13,7 +13,7 @@ export function shellHtml(docId: string, title: string): string {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${t}</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E🌼%3C/text%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Ccircle cx='12.5' cy='12.5' r='10.5' fill='%23e8870f'/%3E%3Ccircle cx='35.5' cy='12.5' r='10.5' fill='%23e8870f'/%3E%3Ccircle cx='35.5' cy='35.5' r='10.5' fill='%23e8870f'/%3E%3Cpath d='M12.5 25 A10.5 10.5 0 0 1 23 35.5 A10.5 10.5 0 0 1 12.5 46 H4.5 A2.5 2.5 0 0 1 2 43.5 V35.5 A10.5 10.5 0 0 1 12.5 25 Z' fill='%23b8690a'/%3E%3C/svg%3E">
 <style>
   :root {
     --bg: #fffdf7; --fg: #1c1917; --muted: #78716c; --line: #e7e2d6;
@@ -36,7 +36,9 @@ export function shellHtml(docId: string, title: string): string {
   .viewer { display: flex; flex-direction: column; height: 100dvh; }
   .viewer-bar { display: flex; align-items: center; justify-content: space-between; padding: 8px 14px; border-bottom: 1px solid var(--line); background: var(--card); gap: 12px; }
   .viewer-left, .viewer-right { display: flex; align-items: center; gap: 10px; }
-  .wordmark { font-weight: 650; font-size: 18px; }
+  .brand { display: inline-flex; align-items: center; gap: 7px; }
+  .brand-mark { display: block; flex: none; }
+  .wordmark { font-family: "Space Grotesk", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; font-weight: 500; font-size: 18px; letter-spacing: -0.015em; color: var(--fg); }
   .viewer-title { font-weight: 600; letter-spacing: -0.01em; }
   .ugc-pill { font-size: 11px; color: var(--marigold-dark); background: var(--accent-soft); border: 1px solid var(--line); border-radius: 999px; padding: 2px 8px; }
   .savestate { white-space: nowrap; }
@@ -100,9 +102,17 @@ export function shellHtml(docId: string, title: string): string {
 <div class="viewer">
   <header class="viewer-bar">
     <div class="viewer-left">
-      <span class="wordmark">🌼</span>
+      <span class="brand">
+        <svg class="brand-mark" width="18" height="18" viewBox="0 0 48 48" aria-hidden="true">
+          <circle cx="12.5" cy="12.5" r="10.5" fill="#e8870f"></circle>
+          <circle cx="35.5" cy="12.5" r="10.5" fill="#e8870f"></circle>
+          <circle cx="35.5" cy="35.5" r="10.5" fill="#e8870f"></circle>
+          <path d="M12.5 25 A10.5 10.5 0 0 1 23 35.5 A10.5 10.5 0 0 1 12.5 46 H4.5 A2.5 2.5 0 0 1 2 43.5 V35.5 A10.5 10.5 0 0 1 12.5 25 Z" fill="#b8690a"></path>
+        </svg>
+        <span class="wordmark">marigold</span>
+      </span>
       <span class="viewer-title">${t}</span>
-      <span class="ugc-pill" title="Served from your machine by marigold-local">local draft</span>
+      <span class="ugc-pill" title="Served from your machine by marigold-draft">local draft</span>
     </div>
     <div class="viewer-right">
       <span class="muted small savestate" id="savestate"></span>
@@ -159,7 +169,7 @@ export function shellHtml(docId: string, title: string): string {
     try { frame.contentWindow.postMessage(msg, "*"); } catch (e) {}
   }
   var connbar = document.getElementById("connbar");
-  var DAEMON_DOWN = "Can\\u2019t reach the marigold-local daemon \\u2014 it may have been stopped. Run 'marigold-local open <file>' to restart it; this page reconnects by itself.";
+  var DAEMON_DOWN = "Can\\u2019t reach the marigold-draft daemon \\u2014 it may have been stopped. Run 'marigold-draft open <file>' to restart it; this page reconnects by itself.";
   function showConn(msg) { connbar.textContent = msg; connbar.className = "connbar show"; }
   function clearConn() { if (connbar.className !== "connbar") { connbar.textContent = ""; connbar.className = "connbar"; } }
   function api(path, opts) {
@@ -699,10 +709,10 @@ export function indexHtml(docs: { docId: string; title: string; path: string }[]
             `<li><a class="doclink" href="/d/${d.docId}"><span class="doctitle">${esc(d.title)}</span><span class="muted small">${esc(d.path)}</span></a></li>`,
         )
         .join("")
-    : `<li><p class="muted" style="padding:14px 16px">No drafts open. Run <code>marigold-local open &lt;file.html&gt;</code></p></li>`;
+    : `<li><p class="muted" style="padding:14px 16px">No drafts open. Run <code>marigold-draft open &lt;file.html&gt;</code></p></li>`;
   return `<!doctype html>
-<html><head><meta charset="utf-8"><title>Marigold Local</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E🌼%3C/text%3E%3C/svg%3E">
+<html><head><meta charset="utf-8"><title>marigold</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Ccircle cx='12.5' cy='12.5' r='10.5' fill='%23e8870f'/%3E%3Ccircle cx='35.5' cy='12.5' r='10.5' fill='%23e8870f'/%3E%3Ccircle cx='35.5' cy='35.5' r='10.5' fill='%23e8870f'/%3E%3Cpath d='M12.5 25 A10.5 10.5 0 0 1 23 35.5 A10.5 10.5 0 0 1 12.5 46 H4.5 A2.5 2.5 0 0 1 2 43.5 V35.5 A10.5 10.5 0 0 1 12.5 25 Z' fill='%23b8690a'/%3E%3C/svg%3E">
 <style>
   :root { --bg:#fffdf7; --fg:#1c1917; --muted:#78716c; --line:#e7e2d6; --card:#fff; --accent-soft:#fdf3e3; --marigold-dark:#b8690a; }
   body { background:var(--bg); color:var(--fg); font:15px/1.55 ui-sans-serif,system-ui,sans-serif; margin:0; }
@@ -714,6 +724,8 @@ export function indexHtml(docs: { docId: string; title: string; path: string }[]
   .doclink { display:flex; align-items:baseline; justify-content:space-between; gap:12px; padding:14px 16px; text-decoration:none; color:inherit; }
   .doclink:hover { background:var(--accent-soft); }
   .doctitle { font-weight:550; }
+  h1.brand { display:flex; align-items:center; gap:10px; font-family:"Space Grotesk",ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; font-weight:500; letter-spacing:-0.015em; }
+  .brand-mark { flex:none; }
 </style></head>
-<body><div class="container"><h1>🌼 Marigold Local</h1><p class="muted">Fast local review loop for agent-authored pages.</p><ul>${items}</ul></div></body></html>`;
+<body><div class="container"><h1 class="brand"><svg class="brand-mark" width="26" height="26" viewBox="0 0 48 48" aria-hidden="true"><circle cx="12.5" cy="12.5" r="10.5" fill="#e8870f"></circle><circle cx="35.5" cy="12.5" r="10.5" fill="#e8870f"></circle><circle cx="35.5" cy="35.5" r="10.5" fill="#e8870f"></circle><path d="M12.5 25 A10.5 10.5 0 0 1 23 35.5 A10.5 10.5 0 0 1 12.5 46 H4.5 A2.5 2.5 0 0 1 2 43.5 V35.5 A10.5 10.5 0 0 1 12.5 25 Z" fill="#b8690a"></path></svg>marigold</h1><p class="muted">Fast local review loop for agent-authored pages.</p><ul>${items}</ul></div></body></html>`;
 }

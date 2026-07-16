@@ -1,6 +1,6 @@
-# Marigold Draft 🌼
+# <img src="assets/marigold-mark.svg" height="26" alt=""> marigold
 
-**A local review loop for agent-authored HTML.** Your coding agent writes a
+**Local drafts — a review loop for agent-authored HTML.** Your coding agent writes a
 rich HTML/SVG draft to a file; `marigold-draft open` serves it in a comment
 shell in your browser; you highlight, comment, and edit in place; **Send
 feedback to agent** returns your review to the agent's blocked CLI call as
@@ -16,7 +16,7 @@ marigold-draft agent-setup   # wires up Claude Code (skill) + Claude Desktop (MC
 
 Or hand this prompt to your coding agent:
 
-> Install Marigold Draft for me using `npm i -g marigold-draft`, then read
+> Install Marigold for me using `npm i -g marigold-draft`, then read
 > https://marigold.page/draft/setup.md and set yourself up
 > to use it.
 

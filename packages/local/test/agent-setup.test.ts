@@ -9,7 +9,7 @@ describe("upsertClaudeMdBlock", () => {
     const out = upsertClaudeMdBlock("");
     expect(out).not.toBeNull();
     expect(out!.startsWith(START)).toBe(true);
-    expect(out).toContain("Present work for review as Marigold Drafts");
+    expect(out).toContain("Present work for review as marigold local drafts");
     expect(out!.trimEnd().endsWith(END)).toBe(true);
   });
 
@@ -34,7 +34,7 @@ describe("upsertClaudeMdBlock", () => {
     expect(out).toContain("before");
     expect(out).toContain("after");
     expect(out).not.toContain("OLD CONTENT");
-    expect(out).toContain("Present work for review as Marigold Drafts");
+    expect(out).toContain("Present work for review as marigold local drafts");
     expect(out.split(START).length - 1).toBe(1);
   });
 
@@ -51,7 +51,7 @@ describe("upsertClaudeMdBlock", () => {
     // a claude-flavored upsert then REPLACES it (same markers, one block)
     const swapped = upsertClaudeMdBlock(once)!;
     expect(swapped).not.toContain("agents content");
-    expect(swapped).toContain("Present work for review as Marigold Drafts");
+    expect(swapped).toContain("Present work for review as marigold local drafts");
     expect(swapped.split(START).length - 1).toBe(1);
   });
 });

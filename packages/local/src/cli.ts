@@ -1,14 +1,14 @@
 /**
- * marigold-local — a warm local daemon for the agent↔human review loop on
+ * marigold-draft — a warm local daemon for the agent↔human review loop on
  * rich HTML/SVG drafts. One background server reused across opens (state in
  * ~/.marigold-local/server.json); `open --json` blocks until the reviewer hits
  * "Send feedback to agent" and prints the feedback JSON to stdout.
  *
- *   marigold-local open <file> [--title T] [--json] [--no-browser] [--no-wait] [--timeout <s>]
- *   marigold-local comments <file> [--json]
- *   marigold-local reply <file> <commentId> <text…>
- *   marigold-local resolve|reopen <file> <commentId>
- *   marigold-local start [--port N] | status | stop | mcp
+ *   marigold-draft open <file> [--title T] [--json] [--no-browser] [--no-wait] [--timeout <s>]
+ *   marigold-draft comments <file> [--json]
+ *   marigold-draft reply <file> <commentId> <text…>
+ *   marigold-draft resolve|reopen <file> <commentId>
+ *   marigold-draft start [--port N] | status | stop | mcp
  */
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
@@ -55,7 +55,7 @@ async function serve(flags: Record<string, string | boolean>): Promise<void> {
   const port = await server.listen(Number(flags.port ?? DEFAULT_PORT));
   mkdirSync(STATE_DIR, { recursive: true });
   writeFileSync(STATE_FILE, JSON.stringify({ port, pid: process.pid, startedAt: server.startedAt } satisfies ServerState, null, 2));
-  log(`marigold-local serving on http://127.0.0.1:${port} (pid ${process.pid})`);
+  log(`marigold-draft serving on http://127.0.0.1:${port} (pid ${process.pid})`);
   const bye = () => {
     const s = readState();
     if (s?.pid === process.pid) rmSync(STATE_FILE, { force: true });
@@ -77,7 +77,7 @@ function printReviewHuman(p: ReviewPayload): void {
 
 async function open(positional: string[], flags: Record<string, string | boolean>): Promise<void> {
   const file = positional[0];
-  if (!file) throw new Error("usage: marigold-local open <file.html> [--json] [--no-browser] [--no-wait] [--timeout <s>]");
+  if (!file) throw new Error("usage: marigold-draft open <file.html> [--json] [--no-browser] [--no-wait] [--timeout <s>]");
   const port = await ensureServer(flags.port ? Number(flags.port) : undefined);
   const doc = await registerDoc(port, file, typeof flags.title === "string" ? flags.title : undefined);
   log(`${doc.url}  (v${doc.version})`);
@@ -102,7 +102,7 @@ async function open(positional: string[], flags: Record<string, string | boolean
       // immediately, so a re-armed wait can't miss feedback.
       r = await fetch(`http://127.0.0.1:${port}/api/docs/${doc.docId}/wait?timeout=${chunk}`);
     } catch {
-      throw new Error("lost connection to the marigold-local server");
+      throw new Error("lost connection to the marigold-draft server");
     }
     if (r.status === 204) continue;
     if (!r.ok) throw new Error(`wait failed (${r.status})`);
@@ -235,7 +235,7 @@ async function main(): Promise<void> {
 
     case "start": {
       const port = await ensureServer(flags.port ? Number(flags.port) : undefined);
-      log(`marigold-local running on http://127.0.0.1:${port}`);
+      log(`marigold-draft running on http://127.0.0.1:${port}`);
       return;
     }
 
@@ -270,7 +270,7 @@ async function main(): Promise<void> {
     case "reply": {
       const [file, commentId, ...words] = positional;
       const body = words.join(" ");
-      if (!commentId || !body) throw new Error("usage: marigold-local reply <file> <commentId> <text…>");
+      if (!commentId || !body) throw new Error("usage: marigold-draft reply <file> <commentId> <text…>");
       const { port, doc } = await withDoc(file, flags);
       const r = await fetch(`http://127.0.0.1:${port}/api/docs/${doc.docId}/comments/${commentId}/replies`, {
         method: "POST",
@@ -285,7 +285,7 @@ async function main(): Promise<void> {
     case "resolve":
     case "reopen": {
       const [file, commentId] = positional;
-      if (!commentId) throw new Error(`usage: marigold-local ${cmd} <file> <commentId>`);
+      if (!commentId) throw new Error(`usage: marigold-draft ${cmd} <file> <commentId>`);
       const { port, doc } = await withDoc(file, flags);
       const r = await fetch(`http://127.0.0.1:${port}/api/docs/${doc.docId}/comments/${commentId}`, {
         method: "PATCH",
@@ -327,7 +327,7 @@ async function main(): Promise<void> {
     }
 
     default:
-      log(`marigold-local — local Marigold review loop for agent-authored HTML/SVG
+      log(`marigold-draft — local Marigold review loop for agent-authored HTML/SVG
 
   open <file>      open a draft in the browser and wait for feedback
                    --json         print the feedback payload as JSON (stdout)

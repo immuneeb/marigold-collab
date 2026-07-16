@@ -1,5 +1,5 @@
 /**
- * `marigold-local mcp` — a stdio MCP server so chat clients without shell
+ * `marigold-draft mcp` — a stdio MCP server so chat clients without shell
  * access (Claude Desktop) can drive the local review loop: author a draft,
  * open it in the user's browser, block for feedback, revise, reply, resolve.
  * Every tool talks HTTP to the (auto-started) background daemon; the daemon
@@ -39,7 +39,7 @@ async function open(file: string, title?: string, browser = true) {
   return { port, doc };
 }
 
-const DIGEST = `marigold-local: a localhost review loop for rich HTML/SVG drafts.
+const DIGEST = `marigold-draft: a localhost review loop for rich HTML/SVG drafts.
 Workflow: create_draft (or open_draft on an existing file) → the doc opens in
 the user's browser → get_feedback with waitSeconds to block until they hit
 "Send feedback to agent" → revise with update_draft (the tab live-reloads,
@@ -52,7 +52,7 @@ produce) and follow the returned methodology + posture pack.`;
 
 export async function runMcp(): Promise<void> {
   const server = new McpServer(
-    { name: "marigold-local", version: "0.1.0" },
+    { name: "marigold-draft", version: "0.1.0" },
     { instructions: DIGEST },
   );
 

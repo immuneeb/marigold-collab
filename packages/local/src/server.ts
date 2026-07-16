@@ -419,7 +419,7 @@ export class LocalServer {
         resolved: rootsOf((s) => s === "resolved").length,
         orphaned: rootsOf((s) => s === "orphaned").length,
       },
-      hint: `Revise ${session.path} (the page live-reloads on save). For each comment: make the edit, then \`marigold-local reply ${basename(session.path)} <id> "<what changed>"\` and \`marigold-local resolve ${basename(session.path)} <id>\`. Then run \`marigold-local open ${basename(session.path)} --json --no-browser\` to wait for the next round.`,
+      hint: `Revise ${session.path} (the page live-reloads on save). For each comment: make the edit, then \`marigold-draft reply ${basename(session.path)} <id> "<what changed>"\` and \`marigold-draft resolve ${basename(session.path)} <id>\`. Then run \`marigold-draft open ${basename(session.path)} --json --no-browser\` to wait for the next round.`,
     };
   }
 
@@ -446,7 +446,7 @@ export class LocalServer {
         "content-type": "image/svg+xml",
         "cache-control": "public, max-age=86400",
       });
-      res.end('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><text y="13" font-size="13">🌼</text></svg>');
+      res.end('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48"><circle cx="12.5" cy="12.5" r="10.5" fill="#e8870f"/><circle cx="35.5" cy="12.5" r="10.5" fill="#e8870f"/><circle cx="35.5" cy="35.5" r="10.5" fill="#e8870f"/><path d="M12.5 25 A10.5 10.5 0 0 1 23 35.5 A10.5 10.5 0 0 1 12.5 46 H4.5 A2.5 2.5 0 0 1 2 43.5 V35.5 A10.5 10.5 0 0 1 12.5 25 Z" fill="#b8690a"/></svg>');
       return;
     }
 
@@ -540,7 +540,7 @@ export class LocalServer {
       const session = this.resolveSession(dm[1] ?? "");
       if (!session) {
         res.writeHead(404, { "content-type": "text/plain" });
-        res.end("draft not open — run: marigold-local open <file>");
+        res.end("draft not open — run: marigold-draft open <file>");
         return;
       }
       if (dm[2]) {

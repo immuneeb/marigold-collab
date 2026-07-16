@@ -25,10 +25,10 @@ function cliPath(): string {
 
 const SKILL = `---
 name: marigold-draft
-description: Marigold Draft — local review loop for agent-authored HTML/SVG drafts. Use when the user says "marigold draft", "spin up marigold draft", asks for a local draft/mockup/diagram they can comment on, or wants fast local revving on a rich webpage before (or instead of) publishing to cloud Marigold.
+description: Marigold — local review loop for agent-authored HTML/SVG drafts (marigold local drafts). Use when the user says "marigold draft", "spin up marigold draft", asks for a local draft/mockup/diagram they can comment on, or wants fast local revving on a rich webpage before (or instead of) publishing to cloud Marigold.
 ---
 
-# Marigold Draft — local draft review loop
+# Marigold local drafts — review loop
 
 Serve an HTML/SVG draft on localhost in the Marigold comment shell; the user
 highlights/comments/edits in place and clicks **Send feedback to agent**; you
@@ -161,7 +161,7 @@ const CLAUDE_MD_START_PREFIX = "<!-- marigold-draft:start";
 const CLAUDE_MD_START = `${CLAUDE_MD_START_PREFIX} — managed by \`marigold-draft agent-setup\`; delete this block to opt out -->`;
 const CLAUDE_MD_END = "<!-- marigold-draft:end -->";
 const CLAUDE_MD_BLOCK = `${CLAUDE_MD_START}
-# Present work for review as Marigold Drafts
+# Present work for review as marigold local drafts
 
 When you finish something the user should review — a plan, report, analysis,
 spec, mockup, diagram, or a set of options — don't paste it into chat. Write
@@ -169,7 +169,7 @@ it as one self-contained HTML page and open it in the local review shell via
 the marigold-draft skill. The user comments on the rendered page and hits
 "Send feedback to agent"; the feedback returns to you as JSON; revise and
 repeat. Chat stays for conversation and quick answers — reviewable artifacts
-go through Marigold Draft.
+go through marigold local drafts.
 
 Stay reachable the whole session: if your harness has a persistent background
 monitor, run \`marigold-draft listen <this-session's-drafts-dir>\` under it
@@ -208,10 +208,10 @@ export function upsertClaudeMdBlock(existing: string): string | null {
   return upsertManagedBlock(existing, CLAUDE_MD_BLOCK);
 }
 
-const AGENTS_SNIPPET = `## Marigold Draft (local review loop)
+const AGENTS_SNIPPET = `## Marigold local drafts (review loop)
 
 Default: when presenting finished work for the user's review (plans, reports,
-mockups, diagrams, options), open it as a Marigold Draft instead of pasting a
+mockups, diagrams, options), open it as a marigold local draft instead of pasting a
 wall of text into chat.
 
 When asked to "spin up marigold draft" (or for a local commentable draft):
@@ -335,7 +335,7 @@ function setupClaudeDesktop(): boolean {
 }
 
 export function runAgentSetup(opts: { claudeMd?: boolean; agentsMd?: boolean } = {}): void {
-  log("Setting up Marigold Draft for your AI tooling…\n");
+  log("Setting up Marigold (local drafts) for your AI tooling…\n");
   setupClaudeCode();
   if (opts.claudeMd !== false) setupClaudeMd();
   const desktop = setupClaudeDesktop();

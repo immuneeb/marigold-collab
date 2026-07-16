@@ -1,7 +1,7 @@
-# @marigold/local — `marigold-local`
+# Marigold — local drafts (`marigold-draft`)
 
 The Marigold review loop, on your machine, in milliseconds. An agent writes a
-rich HTML/SVG draft to a file; `marigold-local open` serves it in the same
+rich HTML/SVG draft to a file; `marigold-draft open` serves it in the same
 comment shell as cloud Marigold; you highlight, comment, edit in place, and hit
 **Send feedback to agent** — the agent's blocked `open --json` call returns the
 feedback and it revises the file, which live-reloads in your tab.
@@ -27,7 +27,7 @@ marigold-draft agent-setup   # wires up Claude Code (skill) + Claude Desktop (MC
 
 Or hand this prompt to your coding agent:
 
-> Install Marigold Draft for me using `npm i -g marigold-draft`, then read
+> Install Marigold for me using `npm i -g marigold-draft`, then read
 > https://marigold.page/draft/setup.md and set yourself up
 > to use it.
 
@@ -38,15 +38,15 @@ From the monorepo instead: `pnpm --filter marigold-draft build`, then link
 
 ```sh
 # 1. write draft.html (full document or fragment — fragments get a neutral wrapper)
-marigold-local open draft.html --json          # opens the browser tab, BLOCKS
+marigold-draft open draft.html --json          # opens the browser tab, BLOCKS
 # 2. reviewer comments / edits in place / hits "Send feedback to agent"
 #    → the open call prints the review JSON (openComments with anchoredText,
 #      overallComment, per-comment replies) and exits
 # 3. edit draft.html — the tab live-reloads, comments re-anchor
-marigold-local reply draft.html c1 "Bumped the chart to 34px"
-marigold-local resolve draft.html c1
+marigold-draft reply draft.html c1 "Bumped the chart to 34px"
+marigold-draft resolve draft.html c1
 # 4. next round (tab already connected, so no new browser tab):
-marigold-local open draft.html --json --no-browser
+marigold-draft open draft.html --json --no-browser
 ```
 
 Run the blocking `open` as a background process; its exit is the signal that
@@ -103,7 +103,7 @@ mcp               stdio MCP server for chat clients (see below)
 
 ## MCP server (Claude Desktop and other chat clients)
 
-`marigold-local mcp` speaks MCP over stdio, for clients that can't run shell
+`marigold-draft mcp` speaks MCP over stdio, for clients that can't run shell
 commands. Tools: `create_draft` (html in → file written under
 `~/.marigold-local/drafts/` → browser opens), `open_draft`, `update_draft`
 (tab live-reloads), `get_feedback` (with `waitSeconds` it blocks until the

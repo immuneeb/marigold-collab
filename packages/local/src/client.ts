@@ -49,7 +49,7 @@ export async function ensureServer(preferredPort?: number): Promise<number> {
     const s = readState();
     if (s && s.pid === child.pid && (await ping(s.port))) return s.port;
   }
-  throw new Error("could not start the marigold-local server (try `marigold-local serve` for logs)");
+  throw new Error("could not start the marigold-draft server (try `marigold-draft serve` for logs)");
 }
 
 export function openBrowser(url: string): void {
