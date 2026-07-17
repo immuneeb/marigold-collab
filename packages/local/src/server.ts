@@ -4,14 +4,21 @@ import { homedir } from "node:os";
 import { dirname, basename, join, resolve as resolvePath } from "node:path";
 import { parse } from "node-html-parser";
 import { ANCHOR_AGENT_JS } from "@marigold/core/agent-src";
+import { diffInstrumented, isEmptyDiff } from "@marigold/core/diff";
 import { applyInlineEdits, instrumentHtml, type CommentAnchor } from "@marigold/core/instrument";
 import {
+  buildContext,
+  buildHistory,
+  decodeBaseline,
+  encodeBaseline,
   isFullDocument,
   loadSidecar,
   prepareHtml,
+  pushChange,
   reanchorComments,
   saveSidecar,
   sha256Hex,
+  trimSummary,
   WRAP_MAIN_CLASS,
   type LocalComment,
   type ReviewRound,
@@ -29,6 +36,9 @@ interface DocSession {
   path: string; // absolute
   sidecar: Sidecar;
   contentHash: string;
+  // Last-seen source, kept in memory as the diff base for the next version
+  // bump (seeded from the persisted baseline so a cold daemon still diffs).
+  baselineSource: string | undefined;
   instrumented: string;
   sse: Set<http.ServerResponse>;
   waiters: Set<Waiter>;
@@ -240,6 +250,7 @@ export class LocalServer {
       path: abs,
       sidecar,
       contentHash: "",
+      baselineSource: decodeBaseline(sidecar.baseline) ?? undefined,
       instrumented: "",
       sse: new Set(),
       waiters: new Set(),
@@ -247,7 +258,22 @@ export class LocalServer {
       refreshTimer: null,
       selfWriteUntil: 0,
     };
-    this.rebuild(session, /* bumpVersion */ sidecar.version === 0);
+    // Cold-open attribution: if a persisted baseline decodes AND the file on
+    // disk has since diverged from it, an edit landed while the daemon was down
+    // — record it as a real "AI" change (a file write is the agent's, and it may
+    // consume the pending intent noted for that save) rather than silently
+    // advancing the baseline and losing it. Only a brand-new doc (version 0) or
+    // an absent/undecodable baseline takes the plain re-seed path.
+    let bumpVersion = sidecar.version === 0;
+    let openActor: "AI" | undefined;
+    if (!bumpVersion && session.baselineSource !== undefined) {
+      const currentSrc = this.readSource(abs);
+      if (currentSrc && sha256Hex(currentSrc) !== sha256Hex(session.baselineSource)) {
+        bumpVersion = true;
+        openActor = "AI";
+      }
+    }
+    this.rebuild(session, bumpVersion, openActor);
     saveSidecar(abs, session.sidecar);
 
     // Watch the directory (rename-resilient for atomic-save editors) and filter
@@ -279,16 +305,50 @@ export class LocalServer {
     }
   }
 
-  /** Read the file, wrap+instrument, re-anchor. Returns true if content changed. */
-  private rebuild(session: DocSession, bumpVersion: boolean): boolean {
+  /** Read the file, wrap+instrument, re-anchor. Returns true if content changed.
+   * When `actor` is given and the version bumps, records the element-level diff
+   * against the previous source as a change entry. */
+  private rebuild(session: DocSession, bumpVersion: boolean, actor?: "You" | "AI"): boolean {
     const src = this.readSource(session.path);
     const hash = sha256Hex(src);
     if (hash === session.contentHash) return false;
+    const prevSource = session.baselineSource;
     session.contentHash = hash;
     session.instrumented = instrumentHtml(prepareHtml(src, session.sidecar.title));
     if (bumpVersion) session.sidecar.version += 1;
     reanchorComments(session.sidecar.comments, session.instrumented);
+    if (bumpVersion && actor && prevSource !== undefined) {
+      this.recordChange(session, prevSource, src, actor);
+    }
+    session.baselineSource = src;
+    session.sidecar.baseline = encodeBaseline(src, session.sidecar.version);
     return true;
+  }
+
+  /** Diff the version bump and append a change entry. Diffing must never break
+   * serving, so any failure is swallowed; the baseline still advances. */
+  private recordChange(session: DocSession, prevSource: string, nextSource: string, actor: "You" | "AI"): void {
+    try {
+      // Store a trimmed summary — consumers read at most CHANGE_SAMPLE entries
+      // per list, so persisting the full 40×3 payload × up to 200 changes is
+      // dead weight rewritten on every save. Stats keep the true counts.
+      const summary = trimSummary(diffInstrumented(prevSource, nextSource));
+      if (isEmptyDiff(summary)) return; // below the reporting altitude — nothing to record
+      // Only an "AI" save (the agent's own edit) consumes the noted intent; a
+      // reviewer "You" inline edit made between `note` and the save must not
+      // steal the "why" the agent recorded for its next write.
+      const intent = actor === "AI" ? session.sidecar.pendingIntent : undefined;
+      if (intent !== undefined) delete session.sidecar.pendingIntent;
+      pushChange(session.sidecar, {
+        version: session.sidecar.version,
+        at: new Date().toISOString(),
+        actor,
+        ...(intent ? { intent } : {}),
+        summary,
+      });
+    } catch {
+      /* a diff failure must never stop the draft from serving */
+    }
   }
 
   /** Editors save atomically (write + rename), so briefly-missing/empty reads happen. */
@@ -308,7 +368,14 @@ export class LocalServer {
 
   private refreshFromDisk(session: DocSession): void {
     const selfWrite = Date.now() < session.selfWriteUntil;
-    const changed = this.rebuild(session, true);
+    // Every watcher-detected disk write is attributed "AI". Locally the agent is
+    // the file writer, so this is right in the common case — but it also covers a
+    // human editing the file in their own editor, which is mis-attributed. That's
+    // an ACCEPTED limitation of the two-party local model: there's no reliable
+    // signal to tell an agent's write from a human's on the same file. (An inline
+    // edit from the review shell is the exception — it already rebuilt + attributed
+    // itself as "You"; its own watcher event no-ops on the unchanged hash.)
+    const changed = this.rebuild(session, true, "AI");
     if (!changed) return;
     saveSidecar(session.path, session.sidecar);
     if (selfWrite) {
@@ -642,6 +709,10 @@ export class LocalServer {
         const body = await readBody(req);
         if (body.status === "open" || body.status === "resolved") {
           target.status = body.status;
+          // Stamp the version resolved-at so the context digest can pair the
+          // comment with the change that addressed it; clear it on reopen.
+          if (body.status === "resolved") target.resolvedAtVersion = session.sidecar.version;
+          else delete target.resolvedAtVersion;
           saveSidecar(session.path, session.sidecar);
           this.broadcast(session, "comments", {});
           json(res, 200, { ok: true });
@@ -650,6 +721,29 @@ export class LocalServer {
         json(res, 400, { error: "status must be open|resolved" });
         return;
       }
+    }
+
+    if (sub === "/note" && method === "POST") {
+      const body = await readBody(req);
+      if (typeof body.intent !== "string" || !body.intent.trim()) {
+        json(res, 400, { error: "intent is required" });
+        return;
+      }
+      session.sidecar.pendingIntent = body.intent.trim().slice(0, 500);
+      saveSidecar(session.path, session.sidecar);
+      json(res, 200, { ok: true, pendingIntent: session.sidecar.pendingIntent });
+      return;
+    }
+
+    if (sub === "/history" && method === "GET") {
+      const limit = Math.min(Math.max(1, Number(url.searchParams.get("limit") ?? 50) || 50), 200);
+      json(res, 200, { version: session.sidecar.version, changes: buildHistory(session.sidecar, limit) });
+      return;
+    }
+
+    if (sub === "/context" && method === "GET") {
+      json(res, 200, buildContext(session.sidecar));
+      return;
     }
 
     if (sub === "/inline-edit" && method === "POST") {
@@ -675,7 +769,8 @@ export class LocalServer {
       writeFileSync(session.path, next);
       // Rebuild immediately so version/anchors are current even before the
       // (debounced) watcher fires; the watcher's rebuild then no-ops on hash.
-      const changed = this.rebuild(session, true);
+      // Attributed to "You" — this edit came from the reviewer's shell.
+      const changed = this.rebuild(session, true, "You");
       if (changed) {
         saveSidecar(session.path, session.sidecar);
         this.broadcast(session, "version", { version: session.sidecar.version });

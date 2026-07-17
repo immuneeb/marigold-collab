@@ -6,6 +6,8 @@
  *
  *   marigold-draft open <file> [--title T] [--json] [--no-browser] [--no-wait] [--timeout <s>]
  *   marigold-draft comments <file> [--json]
+ *   marigold-draft context <file> [--json]
+ *   marigold-draft note <file> "one line"
  *   marigold-draft reply <file> <commentId> <text…>
  *   marigold-draft resolve|reopen <file> <commentId>
  *   marigold-draft start [--port N] | status | stop | mcp
@@ -24,6 +26,7 @@ import {
   type OpenResult,
   type ServerState,
 } from "./client";
+import { type ChangeView, type ContextDigest } from "./store";
 import { LocalServer, type ReviewPayload } from "./server";
 import { formatShareResult, ShareError, shareDraft } from "./share";
 
@@ -93,6 +96,35 @@ function printReviewHuman(p: ReviewPayload): void {
     for (const r of c.replies) log(`      ↳ ${r.author}: ${r.body}`);
   }
   if (!p.openComments.length && !p.overallComment) log(dim("  (no open comments — the reviewer just signed off)"));
+}
+
+function statsLine(s: ChangeView["diffStats"]): string {
+  return dim(`+${s.added} −${s.removed} ~${s.changed}`);
+}
+
+function printChangeHuman(c: ChangeView, indent = "  "): void {
+  log(`${indent}${warn("●")} v${c.version} ${dim(c.actor)} ${statsLine(c.diffStats)}${c.intent ? `  ${dim("·")} ${c.intent}` : ""}`);
+  for (const e of c.changed.slice(0, 3)) log(`${indent}    ${dim(`~ ${e.tag}`)} “${e.before.slice(0, 40)}” → “${e.after.slice(0, 40)}”`);
+  for (const e of c.added.slice(0, 3)) log(`${indent}    ${dim(`+ ${e.tag}`)} “${e.text.slice(0, 60)}”`);
+  for (const e of c.removed.slice(0, 3)) log(`${indent}    ${dim(`− ${e.tag}`)} “${e.text.slice(0, 60)}”`);
+}
+
+function printContextHuman(ctx: ContextDigest): void {
+  log(bold("Open comments"));
+  if (!ctx.openComments.length) log(dim("  (none)"));
+  for (const c of ctx.openComments) {
+    log(`  [${c.id}] ${c.author}${c.kind === "overall" ? " (overall feedback)" : ""}${c.anchoredText ? ` on “${c.anchoredText.slice(0, 60)}”` : ""}: ${c.body}`);
+  }
+  log(`\n${bold("Recent changes")}`);
+  if (!ctx.recentChanges.length) log(dim("  (none)"));
+  for (const c of ctx.recentChanges) printChangeHuman(c);
+  log(`\n${bold("Corrections")} ${dim("(resolved comment → the change that addressed it)")}`);
+  if (!ctx.corrections.length) log(dim("  (none)"));
+  for (const p of ctx.corrections) {
+    log(`  ${ok(G.ok)} [${p.comment.id}]${p.comment.anchoredText ? ` on “${p.comment.anchoredText.slice(0, 40)}”` : ""}: ${p.comment.body}`);
+    if (p.change) printChangeHuman(p.change, "      ");
+    else log(dim(`      (resolved at v${p.resolvedAtVersion}; no matching change recorded)`));
+  }
 }
 
 async function open(positional: string[], flags: Record<string, string | boolean>): Promise<void> {
@@ -317,6 +349,31 @@ async function main(): Promise<void> {
       return;
     }
 
+    case "note": {
+      const [file, ...words] = positional;
+      const intent = words.join(" ");
+      if (!file || !intent) throw new Error('usage: marigold-draft note <file> "one line"');
+      const { port, doc } = await withDoc(file, flags);
+      const r = await fetch(`http://127.0.0.1:${port}/api/docs/${doc.docId}/note`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ intent }),
+      });
+      if (!r.ok) throw new Error(`note failed (${r.status})`);
+      log(`${ok(G.ok)} noted — the next save records: ${dim(intent)}`);
+      return;
+    }
+
+    case "context": {
+      const { port, doc } = await withDoc(positional[0], flags);
+      const r = await fetch(`http://127.0.0.1:${port}/api/docs/${doc.docId}/context`);
+      if (!r.ok) throw new Error(`context failed (${r.status})`);
+      const ctx = (await r.json()) as ContextDigest;
+      if (flags.json) process.stdout.write(JSON.stringify(ctx, null, 2) + "\n");
+      else printContextHuman(ctx);
+      return;
+    }
+
     case "status": {
       const state = readState();
       if (!state || !(await ping(state.port))) {
@@ -368,6 +425,11 @@ async function main(): Promise<void> {
                    --origin <url> hosted origin (default marigold.page,
                                   or set MARIGOLD_ORIGIN)
   comments <file>  list comments   [--json]
+  context <file>   digest for catching up on a draft: open comments, recent
+                   changes, and correction pairs (resolved comment → the change
+                   that addressed it)   [--json]
+  note <file> "…"  record the intent (the "why") for the next save — attached
+                   to the change entry the next edit produces
   reply <file> <id> <text…>   reply to a comment (badged AI)
   resolve|reopen <file> <id>  set a comment's status
   start | status | stop       manage the background server

@@ -335,6 +335,142 @@ describe("local review loop", () => {
     expect(bodies).toContain("second thought");
   });
 
+  it("records a change on a file-write bump, attributed AI, consuming the noted intent", async () => {
+    const f = join(dir, "hist-srv.html");
+    writeFileSync(f, "<h1>One</h1><p>original paragraph text here</p>");
+    const d = (await (await post("/api/open", { path: f })).json()) as { docId: string; version: number };
+
+    // `note` sets the intent the next save records.
+    const nr = await post(`/api/docs/${d.docId}/note`, { intent: "sharpen the paragraph" });
+    expect(nr.ok).toBe(true);
+
+    writeFileSync(f, "<h1>One</h1><p>a completely rewritten paragraph body</p>");
+    let hist = { version: 0, changes: [] as { version: number; actor: string; intent?: string; diffStats: { added: number; removed: number; changed: number } }[] };
+    for (let i = 0; i < 50 && hist.changes.length === 0; i++) {
+      await new Promise((r) => setTimeout(r, 60));
+      hist = (await (await api(`/api/docs/${d.docId}/history`)).json()) as typeof hist;
+    }
+    expect(hist.changes.length).toBeGreaterThan(0);
+    const latest = hist.changes[0]!; // most recent first
+    expect(latest.actor).toBe("AI");
+    expect(latest.intent).toBe("sharpen the paragraph");
+    expect(latest.diffStats.added + latest.diffStats.removed + latest.diffStats.changed).toBeGreaterThan(0);
+
+    // The intent was consumed — a second save carries none.
+    writeFileSync(f, "<h1>One</h1><p>a completely rewritten paragraph body, extended</p>");
+    let after = hist;
+    for (let i = 0; i < 50 && after.changes.length === hist.changes.length; i++) {
+      await new Promise((r) => setTimeout(r, 60));
+      after = (await (await api(`/api/docs/${d.docId}/history`)).json()) as typeof hist;
+    }
+    expect(after.changes.length).toBeGreaterThan(hist.changes.length);
+    expect(after.changes[0]!.intent).toBeUndefined();
+  });
+
+  it("cold-open records a daemon-down edit as an AI change, consuming the noted intent", async () => {
+    const f = join(dir, "cold.html");
+    writeFileSync(f, "<h1>Cold</h1><p>version one body text here</p>");
+
+    // A first daemon opens the doc; the agent notes intent for its next save.
+    const s1 = new LocalServer({ watchDebounceMs: 30 });
+    const p1 = await s1.listen(0);
+    const post1 = (path: string, body: unknown) =>
+      fetch(`http://127.0.0.1:${p1}${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    const d = (await (await post1("/api/open", { path: f })).json()) as { docId: string; version: number };
+    await post1(`/api/docs/${d.docId}/note`, { intent: "rewrite while offline" });
+    s1.close();
+
+    // The file diverges from the persisted baseline while the daemon is down.
+    writeFileSync(f, "<h1>Cold</h1><p>a fully rewritten version two body</p>");
+
+    // A fresh daemon lazily re-opens from the registry — the divergence must be
+    // recorded as an AI change carrying (and consuming) the noted intent, not
+    // silently swallowed by a baseline re-seed.
+    const s2 = new LocalServer({ watchDebounceMs: 30 });
+    const p2 = await s2.listen(0);
+    try {
+      const hist = (await (await fetch(`http://127.0.0.1:${p2}/api/docs/${d.docId}/history`)).json()) as {
+        changes: { version: number; actor: string; intent?: string; diffStats: { added: number; removed: number; changed: number } }[];
+      };
+      expect(hist.changes.length).toBeGreaterThan(0);
+      const top = hist.changes[0]!; // most recent first
+      expect(top.actor).toBe("AI");
+      expect(top.intent).toBe("rewrite while offline");
+      expect(top.version).toBeGreaterThan(d.version);
+      expect(top.diffStats.changed).toBeGreaterThan(0);
+    } finally {
+      s2.close();
+    }
+  });
+
+  it("a You inline-edit leaves the noted intent pending for the next AI save", async () => {
+    const f = join(dir, "you.html");
+    writeFileSync(f, "<h1>You</h1><p>original paragraph body</p>");
+    const d = (await (await post("/api/open", { path: f })).json()) as { docId: string };
+    const frame = await (await api(`/d/${d.docId}/frame`)).text();
+    const pid = /<p data-marigold-id="(mg-[0-9a-f]{10})"/.exec(frame)![1]!;
+
+    await post(`/api/docs/${d.docId}/note`, { intent: "for the AI save" });
+
+    // A reviewer inline edit is attributed "You" and must NOT consume the intent.
+    const ie = await post(`/api/docs/${d.docId}/inline-edit`, {
+      edits: [{ marigoldId: pid, html: "reviewer-edited paragraph body" }],
+    });
+    expect(ie.ok).toBe(true);
+    let hist = (await (await api(`/api/docs/${d.docId}/history`)).json()) as {
+      changes: { actor: string; intent?: string }[];
+    };
+    expect(hist.changes[0]!.actor).toBe("You");
+    expect(hist.changes[0]!.intent).toBeUndefined();
+
+    // The still-pending intent is consumed by the next AI file write.
+    await new Promise((r) => setTimeout(r, 850)); // clear the inline-edit self-write window
+    writeFileSync(f, "<h1>You</h1><p>the agent's rewrite of the paragraph</p>");
+    let after = hist;
+    for (let i = 0; i < 40 && after.changes.length === hist.changes.length; i++) {
+      await new Promise((r) => setTimeout(r, 60));
+      after = (await (await api(`/api/docs/${d.docId}/history`)).json()) as typeof hist;
+    }
+    expect(after.changes.length).toBeGreaterThan(hist.changes.length);
+    expect(after.changes[0]!.actor).toBe("AI");
+    expect(after.changes[0]!.intent).toBe("for the AI save");
+  });
+
+  it("resolve stamps resolvedAtVersion and context pairs it to a later change", async () => {
+    const f = join(dir, "ctx-srv.html");
+    writeFileSync(f, "<h1>Doc</h1><p>needs a fix in this line</p>");
+    const d = (await (await post("/api/open", { path: f })).json()) as { docId: string };
+    const frame = await (await api(`/d/${d.docId}/frame`)).text();
+    const pid = /<p data-marigold-id="(mg-[0-9a-f]{10})"/.exec(frame)![1]!;
+    const c = (await (
+      await post(`/api/docs/${d.docId}/comments`, {
+        body: "fix this line",
+        anchor: { marigoldId: pid, textQuote: { exact: "needs a fix" } },
+      })
+    ).json()) as { id: string };
+
+    // Resolve — stamps the current version.
+    const pr = await api(`/api/docs/${d.docId}/comments/${c.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ status: "resolved" }),
+    });
+    expect(pr.ok).toBe(true);
+
+    // A subsequent edit is the correction.
+    writeFileSync(f, "<h1>Doc</h1><p>this line is now fixed and clear</p>");
+    let ctx = { openComments: [] as unknown[], recentChanges: [] as unknown[], corrections: [] as { comment: { id: string }; change: { version: number } | null }[] };
+    for (let i = 0; i < 50 && ctx.corrections.length === 0; i++) {
+      await new Promise((r) => setTimeout(r, 60));
+      ctx = (await (await api(`/api/docs/${d.docId}/context`)).json()) as typeof ctx;
+    }
+    expect(ctx.corrections).toHaveLength(1);
+    expect(ctx.corrections[0]!.comment.id).toBe(c.id);
+    expect(ctx.corrections[0]!.change).not.toBeNull();
+    // The resolved comment is not in the open set.
+    expect(ctx.openComments).toHaveLength(0);
+  });
+
   it("wraps fragments and unwraps them on inline-edit write-back", async () => {
     const frag = join(dir, "frag.html");
     writeFileSync(frag, "<h2>Section</h2><p>Fragment body</p>");

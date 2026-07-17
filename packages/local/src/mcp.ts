@@ -44,7 +44,9 @@ Workflow: create_draft (or open_draft on an existing file) → the draft opens i
 the reviewer's browser → get_feedback with waitSeconds to block until they hit
 "Send feedback to agent" → revise with update_draft (the reviewer's tab
 live-reloads, comments re-anchor) → reply_to_comment + resolve_comment →
-get_feedback again for the next round. Drafts are plain HTML: full documents or
+get_feedback again for the next round. note_intent records the "why" for the
+next save; get_history and get_context replay what changed and pair resolved
+comments with the corrections that addressed them. Drafts are plain HTML: full documents or
 fragments (and .svg), self-contained (external network is blocked by CSP,
 matching cloud Marigold). Before authoring, call start_analysis (pass mode:
 analyze | learn | judge | decide | organize | tune | do | track — pick by what
@@ -255,6 +257,77 @@ export async function runMcp(): Promise<void> {
     async ({ path }) => {
       try {
         return ok({ path, html: readFileSync(path, "utf8") });
+      } catch (e) {
+        return fail((e as Error).message);
+      }
+    },
+  );
+
+  server.registerTool(
+    "note_intent",
+    {
+      title: "Note intent",
+      description:
+        "record the intent — the \"why\" — for the draft's next save. The next edit's change entry carries it, so the history reads as decisions, not just diffs.",
+      inputSchema: {
+        path: z.string(),
+        intent: z.string().describe("One line: why the next edit is being made"),
+      },
+    },
+    async ({ path, intent }) => {
+      try {
+        const { port, doc } = await open(path, undefined, false);
+        const r = await fetch(`http://127.0.0.1:${port}/api/docs/${doc.docId}/note`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ intent }),
+        });
+        if (!r.ok) return fail(`note failed (${r.status})`);
+        return ok(await r.json());
+      } catch (e) {
+        return fail((e as Error).message);
+      }
+    },
+  );
+
+  server.registerTool(
+    "get_history",
+    {
+      title: "Get history",
+      description:
+        "list the draft's recent changes, most recent first — each with its version, actor, intent, diff stats, and a few changed/added/removed element summaries.",
+      inputSchema: {
+        path: z.string(),
+        limit: z.number().optional().describe("How many recent changes to return (default 50, max 200)"),
+      },
+    },
+    async ({ path, limit }) => {
+      try {
+        const { port, doc } = await open(path, undefined, false);
+        const qs = limit ? `?limit=${Math.trunc(limit)}` : "";
+        const r = await fetch(`http://127.0.0.1:${port}/api/docs/${doc.docId}/history${qs}`);
+        if (!r.ok) return fail(`history failed (${r.status})`);
+        return ok(await r.json());
+      } catch (e) {
+        return fail((e as Error).message);
+      }
+    },
+  );
+
+  server.registerTool(
+    "get_context",
+    {
+      title: "Get context",
+      description:
+        "get the draft's catch-up digest: the open comments (with anchored text), the recent changes, and correction pairs (a resolved comment joined to the change that addressed it).",
+      inputSchema: { path: z.string() },
+    },
+    async ({ path }) => {
+      try {
+        const { port, doc } = await open(path, undefined, false);
+        const r = await fetch(`http://127.0.0.1:${port}/api/docs/${doc.docId}/context`);
+        if (!r.ok) return fail(`context failed (${r.status})`);
+        return ok(await r.json());
       } catch (e) {
         return fail((e as Error).message);
       }

@@ -3,14 +3,23 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { instrumentHtml } from "@marigold/core/instrument";
+import { diffInstrumented } from "@marigold/core/diff";
 import {
+  buildContext,
+  buildHistory,
+  decodeBaseline,
   docIdFor,
+  encodeBaseline,
   isFullDocument,
   loadSidecar,
   prepareHtml,
+  pushChange,
   reanchorComments,
   saveSidecar,
+  trimSummary,
   wrapFragment,
+  MAX_CHANGES,
+  type LocalChange,
   type LocalComment,
 } from "../src/store";
 
@@ -94,10 +103,132 @@ describe("sidecar", () => {
     writeFileSync(file, "<p>x</p>");
     const sc = loadSidecar(file);
     expect(sc.docId).toBe(docIdFor(file));
+    expect(sc.changes).toEqual([]); // fresh sidecars carry an empty history
     sc.comments.push(comment(null));
     saveSidecar(file, sc);
     const again = loadSidecar(file);
     expect(again.comments).toHaveLength(1);
     expect(again.docId).toBe(sc.docId);
+  });
+
+  it("loads a pre-change-history sidecar with an empty changes list", () => {
+    const dir = mkdtempSync(join(tmpdir(), "mgl-"));
+    const file = join(dir, "old.html");
+    writeFileSync(file, "<p>x</p>");
+    // A sidecar written before this feature has no `changes` field.
+    writeFileSync(
+      `${file}.marigold.json`,
+      JSON.stringify({ docId: "mgl-old", title: "Old", seq: 0, version: 3, comments: [], reviews: [] }),
+    );
+    const sc = loadSidecar(file);
+    expect(sc.changes).toEqual([]);
+    expect(sc.version).toBe(3);
+  });
+
+  it("round-trips changes[] and the gzip baseline through save/load", () => {
+    const dir = mkdtempSync(join(tmpdir(), "mgl-"));
+    const file = join(dir, "hist.html");
+    const source = "<h1>Alpha</h1><p>The quick brown fox jumps over the lazy dog.</p>";
+    writeFileSync(file, source);
+    const sc = loadSidecar(file);
+    const change: LocalChange = {
+      version: 2,
+      at: new Date().toISOString(),
+      actor: "AI",
+      intent: "tighten the intro",
+      summary: diffInstrumented(source, "<h1>Alpha</h1><p>The lazy dog sleeps.</p>"),
+    };
+    pushChange(sc, change);
+    sc.baseline = encodeBaseline(source, 1);
+    saveSidecar(file, sc);
+
+    const again = loadSidecar(file);
+    expect(again.changes).toHaveLength(1);
+    expect(again.changes[0]!.intent).toBe("tighten the intro");
+    expect(again.changes[0]!.actor).toBe("AI");
+    expect(again.changes[0]!.summary.stats.changed).toBeGreaterThan(0);
+    expect(decodeBaseline(again.baseline)).toBe(source); // gzip survived the round-trip
+  });
+
+  it("pushChange caps the history at MAX_CHANGES (most recent kept)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "mgl-"));
+    const file = join(dir, "cap.html");
+    writeFileSync(file, "<p>x</p>");
+    const sc = loadSidecar(file);
+    const empty = diffInstrumented("<p>a</p>", "<p>b</p>");
+    for (let v = 1; v <= MAX_CHANGES + 5; v++) {
+      pushChange(sc, { version: v, at: new Date().toISOString(), actor: "AI", summary: empty });
+    }
+    expect(sc.changes).toHaveLength(MAX_CHANGES);
+    expect(sc.changes[0]!.version).toBe(6); // oldest 5 dropped
+    expect(sc.changes.at(-1)!.version).toBe(MAX_CHANGES + 5);
+  });
+});
+
+describe("trimSummary", () => {
+  it("caps each list to the sample size, keeps true stats, and flags truncation", () => {
+    const before = Array.from({ length: 10 }, (_, i) => `<p>original paragraph number ${i}</p>`).join("");
+    const after = Array.from({ length: 10 }, (_, i) => `<p>rewritten paragraph number ${i}</p>`).join("");
+    const full = diffInstrumented(before, after);
+    expect(full.stats.changed).toBe(10); // every paragraph changed
+
+    const trimmed = trimSummary(full);
+    expect(trimmed.changed.length).toBe(6); // capped to CHANGE_SAMPLE
+    expect(trimmed.stats.changed).toBe(10); // true count preserved
+    expect(trimmed.truncated).toBe(true);
+  });
+
+  it("leaves a small summary untouched and unflagged", () => {
+    const full = diffInstrumented("<p>one two three</p>", "<p>one two four</p>");
+    const trimmed = trimSummary(full);
+    expect(trimmed.changed.length).toBe(1);
+    expect(trimmed.truncated).toBeUndefined();
+  });
+});
+
+describe("history + context digest", () => {
+  const change = (version: number, actor: "You" | "AI", intent?: string): LocalChange => ({
+    version,
+    at: new Date().toISOString(),
+    actor,
+    ...(intent ? { intent } : {}),
+    summary: diffInstrumented("<h1>A</h1><p>old text</p>", "<h1>A</h1><p>new text</p>"),
+  });
+
+  it("buildHistory returns most-recent-first, capped at the limit", () => {
+    const dir = mkdtempSync(join(tmpdir(), "mgl-"));
+    const file = join(dir, "h.html");
+    writeFileSync(file, "<p>x</p>");
+    const sc = loadSidecar(file);
+    pushChange(sc, change(1, "AI"));
+    pushChange(sc, change(2, "You"));
+    pushChange(sc, change(3, "AI", "why v3"));
+    const hist = buildHistory(sc, 2);
+    expect(hist.map((h) => h.version)).toEqual([3, 2]);
+    expect(hist[0]!.intent).toBe("why v3");
+    expect(hist[0]!.diffStats.changed).toBeGreaterThan(0);
+  });
+
+  it("buildContext pairs a resolved comment with the change at/after its version", () => {
+    const dir = mkdtempSync(join(tmpdir(), "mgl-"));
+    const file = join(dir, "c.html");
+    writeFileSync(file, "<p>x</p>");
+    const sc = loadSidecar(file);
+    const openC = comment({ textQuote: { exact: "still open" } }, "open");
+    openC.id = "c1";
+    const resolvedC = comment({ textQuote: { exact: "was fixed" } }, "resolved");
+    resolvedC.id = "c2";
+    resolvedC.resolvedAtVersion = 3;
+    sc.comments.push(openC, resolvedC);
+    pushChange(sc, change(2, "AI"));
+    pushChange(sc, change(3, "AI", "the fix"));
+
+    const ctx = buildContext(sc);
+    expect(ctx.openComments.map((c) => c.id)).toEqual(["c1"]);
+    expect(ctx.openComments[0]!.anchoredText).toBe("still open");
+    expect(ctx.corrections).toHaveLength(1);
+    expect(ctx.corrections[0]!.comment.id).toBe("c2");
+    expect(ctx.corrections[0]!.change!.version).toBe(3);
+    expect(ctx.corrections[0]!.change!.intent).toBe("the fix");
   });
 });

@@ -7,7 +7,8 @@
   "exports": {
     "./instrument": "./src/instrument.ts",
     "./agent-src": "./src/agent-src.ts",
-    "./principles": "./src/principles.ts"
+    "./principles": "./src/principles.ts",
+    "./diff": "./src/diff.ts"
   },
   "scripts": {
     "test": "vitest run",

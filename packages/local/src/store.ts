@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import { basename } from "node:path";
+import { gunzipSync, gzipSync } from "node:zlib";
+import { type DiffChange, type DiffEntry, type DiffSummary } from "@marigold/core/diff";
 import { type CommentAnchor, resolveAnchor } from "@marigold/core/instrument";
 
 export interface LocalComment {
@@ -18,6 +20,29 @@ export interface LocalComment {
    * (an overallComment that only rode the round payload could be missed by
    * agents reading comments non-blockingly). */
   kind?: "overall";
+  /** The sidecar version at which this comment was resolved — stamped on
+   * resolve so the context digest can join a resolved comment to the change
+   * that addressed it (the correction pair). Backward-compatible: absent on
+   * comments resolved before this shipped. */
+  resolvedAtVersion?: number;
+}
+
+/** One version bump's element-level diff, attributed and (optionally) explained
+ * by the intent the agent noted for it. Mirrors the cloud version-history row
+ * (core/versioning.ts) on the local surface. */
+export interface LocalChange {
+  version: number;
+  at: string; // ISO
+  actor: "You" | "AI"; // "You" = a review-shell inline edit; "AI" = a file write
+  intent?: string; // "why", captured via `marigold-draft note` before the save
+  summary: DiffSummary;
+}
+
+/** gzip+base64 of the last-seen draft source, so the diff base survives a
+ * daemon restart (a cold daemon has no in-memory previous version). */
+export interface SidecarBaseline {
+  version: number;
+  gz: string;
 }
 
 export interface ReviewRound {
@@ -44,8 +69,19 @@ export interface Sidecar {
    * deliveredSeq ⇒ a round was submitted while no agent was listening; the
    * next wait delivers it immediately instead of blocking. */
   deliveredSeq: number;
+  /** Element-level change history, one entry per version bump (most recent
+   * last), capped at MAX_CHANGES. */
+  changes: LocalChange[];
+  /** Last-seen source, so a restarted daemon can still diff the next save. */
+  baseline?: SidecarBaseline;
+  /** "why" for the next save, set by `marigold-draft note` and consumed by the
+   * next change event. */
+  pendingIntent?: string;
   updatedAt: string;
 }
+
+/** Most-recent change entries retained — bounds the sidecar to a sane size. */
+export const MAX_CHANGES = 200;
 
 export function sha256Hex(input: string): string {
   return createHash("sha256").update(input).digest("hex");
@@ -71,6 +107,8 @@ export function loadSidecar(absPath: string, title?: string): Sidecar {
       // Migration: pre-deliveredSeq sidecars were written when delivery was
       // always live — treat existing rounds as already handed over.
       if (typeof raw.deliveredSeq !== "number") raw.deliveredSeq = raw.reviews?.length ?? 0;
+      // Migration: pre-change-history sidecars load with an empty history.
+      if (!Array.isArray(raw.changes)) raw.changes = [];
       return raw;
     }
   } catch {
@@ -84,8 +122,31 @@ export function loadSidecar(absPath: string, title?: string): Sidecar {
     comments: [],
     reviews: [],
     deliveredSeq: 0,
+    changes: [],
     updatedAt: new Date().toISOString(),
   };
+}
+
+/** Encode a draft source as the diff baseline (gzip+base64), tagged with the
+ * version it represents. */
+export function encodeBaseline(source: string, version: number): SidecarBaseline {
+  return { version, gz: gzipSync(Buffer.from(source, "utf8")).toString("base64") };
+}
+
+/** Recover the baseline source, or null if absent/corrupt (diffing just skips). */
+export function decodeBaseline(baseline: SidecarBaseline | undefined): string | null {
+  if (!baseline?.gz) return null;
+  try {
+    return gunzipSync(Buffer.from(baseline.gz, "base64")).toString("utf8");
+  } catch {
+    return null;
+  }
+}
+
+/** Append a change and keep only the most recent MAX_CHANGES entries. */
+export function pushChange(sc: Sidecar, change: LocalChange): void {
+  sc.changes.push(change);
+  if (sc.changes.length > MAX_CHANGES) sc.changes = sc.changes.slice(-MAX_CHANGES);
 }
 
 export function saveSidecar(absPath: string, sc: Sidecar): void {
@@ -152,4 +213,131 @@ export function reanchorComments(comments: LocalComment[], instrumentedHtml: str
     }
   }
   return changed;
+}
+
+// ── history + context digest ────────────────────────────────────────────────
+// Shared by the CLI (`context`/`get_history`) and the local MCP server, so both
+// surfaces speak one shape. Pure functions over the sidecar.
+
+/** How many changed/added/removed elements each change view carries inline. */
+const CHANGE_SAMPLE = 6;
+/** How many recent changes the context digest includes. */
+const CONTEXT_CHANGES = 10;
+
+/** Trim a diff summary down to what any consumer actually reads (CHANGE_SAMPLE
+ * entries per list) before it's persisted in a change entry — the stored
+ * history stays a few KB instead of the full 40×3-entry payload. `stats` keeps
+ * the true counts; `truncated` is set if trimming (or the diff's own cap)
+ * dropped entries. */
+export function trimSummary(s: DiffSummary): DiffSummary {
+  const added = s.added.slice(0, CHANGE_SAMPLE);
+  const removed = s.removed.slice(0, CHANGE_SAMPLE);
+  const changed = s.changed.slice(0, CHANGE_SAMPLE);
+  const trimmed =
+    added.length < s.added.length ||
+    removed.length < s.removed.length ||
+    changed.length < s.changed.length;
+  return {
+    added,
+    removed,
+    changed,
+    stats: s.stats,
+    ...(s.truncated || trimmed ? { truncated: true } : {}),
+  };
+}
+
+/** A change flattened for reading: the stats plus a few sample elements. */
+export interface ChangeView {
+  version: number;
+  at: string;
+  actor: "You" | "AI";
+  intent?: string;
+  diffStats: DiffSummary["stats"];
+  added: DiffEntry[];
+  removed: DiffEntry[];
+  changed: DiffChange[];
+  truncated?: boolean;
+}
+
+export interface OpenCommentView {
+  id: string;
+  author: string;
+  body: string;
+  status: string;
+  kind: "overall" | null;
+  anchoredText: string | null;
+}
+
+/** A resolved comment joined to the change that (likely) addressed it. */
+export interface CorrectionView {
+  comment: { id: string; body: string; anchoredText: string | null };
+  resolvedAtVersion: number;
+  change: ChangeView | null;
+}
+
+export interface ContextDigest {
+  openComments: OpenCommentView[];
+  recentChanges: ChangeView[];
+  corrections: CorrectionView[];
+}
+
+function anchoredTextOf(c: LocalComment): string | null {
+  return c.anchor?.textQuote?.exact ?? null;
+}
+
+export function summarizeChange(c: LocalChange): ChangeView {
+  return {
+    version: c.version,
+    at: c.at,
+    actor: c.actor,
+    ...(c.intent ? { intent: c.intent } : {}),
+    diffStats: c.summary.stats,
+    added: c.summary.added.slice(0, CHANGE_SAMPLE),
+    removed: c.summary.removed.slice(0, CHANGE_SAMPLE),
+    changed: c.summary.changed.slice(0, CHANGE_SAMPLE),
+    ...(c.summary.truncated ? { truncated: true } : {}),
+  };
+}
+
+/** Recent changes, most recent first, capped at `limit`. */
+export function buildHistory(sc: Sidecar, limit = 50): ChangeView[] {
+  return sc.changes
+    .slice(-Math.max(0, limit))
+    .reverse()
+    .map(summarizeChange);
+}
+
+/** The digest an agent reads to catch up on a draft: what's still open, what
+ * recently changed, and which resolved comments map to which correction. */
+export function buildContext(sc: Sidecar): ContextDigest {
+  const openComments = sc.comments
+    .filter((c) => !c.parentId && c.status !== "resolved")
+    .map((c) => ({
+      id: c.id,
+      author: c.author,
+      body: c.body,
+      status: c.status,
+      kind: c.kind ?? null,
+      anchoredText: anchoredTextOf(c),
+    }));
+
+  const recentChanges = buildHistory(sc, CONTEXT_CHANGES);
+
+  // A correction is the earliest change at or after the version a comment was
+  // resolved at — the edit that most likely addressed the note.
+  const corrections: CorrectionView[] = sc.comments
+    .filter((c) => !c.parentId && c.status === "resolved" && typeof c.resolvedAtVersion === "number")
+    .map((c) => {
+      const at = c.resolvedAtVersion!;
+      const match = sc.changes
+        .filter((ch) => ch.version >= at)
+        .sort((a, b) => a.version - b.version)[0];
+      return {
+        comment: { id: c.id, body: c.body, anchoredText: anchoredTextOf(c) },
+        resolvedAtVersion: at,
+        change: match ? summarizeChange(match) : null,
+      };
+    });
+
+  return { openComments, recentChanges, corrections };
 }
