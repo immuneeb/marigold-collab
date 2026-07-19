@@ -44,9 +44,12 @@ Workflow: create_draft (or open_draft on an existing file) → the draft opens i
 the reviewer's browser → get_feedback with waitSeconds to block until they hit
 "Send feedback to agent" → revise with update_draft (the reviewer's tab
 live-reloads, comments re-anchor) → reply_to_comment + resolve_comment →
-get_feedback again for the next round. note_intent records the "why" for the
-next save; get_history and get_context replay what changed and pair resolved
-comments with the corrections that addressed them. Drafts are plain HTML: full documents or
+get_feedback again for the next round. resolve_comment only PROPOSES a
+resolution — the reviewer confirms it (or reopens if the fix missed) in the
+shell. note_intent records the "why" for the next save; get_history and
+get_context replay what changed, pair resolved comments with the corrections
+that addressed them, and surface fixes the reviewer rejected (reopened) as
+negative signals. Drafts are plain HTML: full documents or
 fragments (and .svg), self-contained (external network is blocked by CSP,
 matching cloud Marigold). Before authoring, call start_analysis (pass mode:
 analyze | learn | judge | decide | organize | tune | do | track — pick by what
@@ -224,7 +227,8 @@ export async function runMcp(): Promise<void> {
     "resolve_comment",
     {
       title: "Resolve comment",
-      description: "mark a comment thread resolved, or reopen it.",
+      description:
+        "propose a comment thread resolved, or reopen it. Resolving is a PROPOSAL — the reviewer confirms it (or reopens it if the fix missed) in the shell; it is not final until they do. Reply first with what you changed.",
       inputSchema: {
         path: z.string(),
         commentId: z.string(),
@@ -237,10 +241,14 @@ export async function runMcp(): Promise<void> {
         const r = await fetch(`http://127.0.0.1:${port}/api/docs/${doc.docId}/comments/${commentId}`, {
           method: "PATCH",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ status: reopen ? "open" : "resolved" }),
+          body: JSON.stringify({ status: reopen ? "open" : "resolved", source: "agent" }),
         });
         if (!r.ok) return fail(`update failed (${r.status})`);
-        return ok({ [reopen ? "reopened" : "resolved"]: commentId });
+        return ok(
+          reopen
+            ? { reopened: commentId }
+            : { proposed: commentId, note: "proposed resolved — the reviewer confirms in the shell" },
+        );
       } catch (e) {
         return fail((e as Error).message);
       }
@@ -319,7 +327,7 @@ export async function runMcp(): Promise<void> {
     {
       title: "Get context",
       description:
-        "get the draft's catch-up digest: the open comments (with anchored text), the recent changes, and correction pairs (a resolved comment joined to the change that addressed it).",
+        "get the draft's catch-up digest: the open comments (with anchored text), the recent changes, correction pairs (a resolved comment joined to the change that addressed it — confirmed ones first, an agent's unconfirmed proposals labeled), and rejected fixes (comments the reviewer reopened, with the versions whose fixes did NOT address them).",
       inputSchema: { path: z.string() },
     },
     async ({ path }) => {

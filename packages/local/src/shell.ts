@@ -87,10 +87,12 @@ export function shellHtml(docId: string, title: string): string {
   .cmt-thread { border: 1px solid var(--line); border-radius: var(--r-lg); padding: 11px 13px; margin-bottom: 10px; background: var(--white); cursor: pointer; box-shadow: var(--shadow-card); }
   .cmt-thread.sel { border-color: var(--marigold); box-shadow: 0 0 0 2px var(--tint-strong); }
   .cmt-thread.resolved { opacity: .6; }
+  .cmt-thread.proposed { border-color: var(--line-strong); }
   .cmt-thread.draft { border-color: var(--marigold); cursor: default; }
   .cmt-anchor { font: 400 12px/1.5 var(--font-mono); color: var(--marigold-deep); background: var(--tint); border-radius: var(--r-sm); padding: 5px 9px; margin-bottom: 8px; }
   .cmt-anchor .orphan { color: var(--ink-3); font-family: var(--font-sans); }
   .cmt-overall { display: inline-block; font: 600 11px/1.2 var(--font-sans); color: var(--marigold-deep); background: var(--tint); border: 1px solid var(--line); border-radius: var(--r-sm); padding: 3px 9px; margin-bottom: 8px; }
+  .cmt-proposed { font: 600 11.5px/1.4 var(--font-sans); color: var(--marigold-deep); background: var(--tint); border: 1px solid var(--line); border-radius: var(--r-sm); padding: 5px 9px; margin-bottom: 8px; }
   .cmt-body { font: 400 13.5px/1.5 var(--font-sans); margin: 6px 0; color: var(--ink); }
   .cmt-body.reply { padding-left: 10px; border-left: 2px solid var(--line); }
   .cmt-author { font-weight: 600; margin-right: 6px; }
@@ -222,6 +224,15 @@ export function shellHtml(docId: string, title: string): string {
   }
   function roots() { return comments.filter(function (c) { return !c.parentId; }); }
   function repliesOf(id) { return comments.filter(function (c) { return c.parentId === id; }); }
+  // Every status change from the shell is the reviewer's: a resolve confirms
+  // (agent proposals become final), a reopen is a negative signal. source lets
+  // the daemon tell us apart from the agent's own CLI/MCP resolves.
+  function patchStatus(id, status) {
+    return api("/comments/" + id, {
+      method: "PATCH", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ status: status, source: "reviewer" })
+    }).then(refresh).catch(fail("Update failed"));
+  }
   function trackedIds() {
     return roots().filter(function (c) { return c.status !== "resolved" && c.anchor && c.anchor.marigoldId; })
       .map(function (c) { return c.anchor.marigoldId; });
@@ -254,7 +265,13 @@ export function shellHtml(docId: string, title: string): string {
     return d;
   }
   function threadCard(c) {
-    var card = el("div", "cmt-thread" + (selected === c.id ? " sel" : "") + (c.status === "resolved" ? " resolved" : ""));
+    // MUN-127: an agent resolve is only a proposal (status resolved,
+    // resolution "proposed") — the reviewer confirms or reopens it here. A
+    // confirmed or legacy (resolution-less) resolved comment is final.
+    var isResolved = c.status === "resolved";
+    var isProposed = isResolved && c.resolution === "proposed";
+    var card = el("div", "cmt-thread" + (selected === c.id ? " sel" : "")
+      + (isResolved && !isProposed ? " resolved" : "") + (isProposed ? " proposed" : ""));
     card.setAttribute("data-thread", c.id);
     card.addEventListener("click", function () {
       selected = c.id;
@@ -262,6 +279,10 @@ export function shellHtml(docId: string, title: string): string {
       render();
     });
     if (c.kind === "overall") card.appendChild(el("div", "cmt-overall", "Overall feedback"));
+    if (isProposed) {
+      card.appendChild(el("div", "cmt-proposed",
+        "The agent proposes this resolved" + (typeof c.resolvedAtVersion === "number" ? " at v" + c.resolvedAtVersion : "")));
+    }
     var quote = c.anchor && c.anchor.textQuote && c.anchor.textQuote.exact;
     if (quote) {
       var a = el("div", "cmt-anchor", "\\u201C" + quote.slice(0, 80) + "\\u201D");
@@ -289,30 +310,41 @@ export function shellHtml(docId: string, title: string): string {
       }
     });
     row.appendChild(input);
-    var res = el("button", "btn-ghost", c.status === "resolved" ? "Reopen" : "Resolve");
-    res.title = (c.status === "resolved" ? "Reopen" : "Resolve") + " — E when selected";
-    res.addEventListener("click", function (e) {
-      e.stopPropagation();
-      api("/comments/" + c.id, {
-        method: "PATCH", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ status: c.status === "resolved" ? "open" : "resolved" })
-      }).then(refresh).catch(fail("Update failed"));
-    });
-    row.appendChild(res);
+    if (isProposed) {
+      // A proposal: confirm it (final) or reopen it (the fix didn't land).
+      var confirm = el("button", "btn-ghost", "Confirm");
+      confirm.title = "Confirm this is resolved";
+      confirm.addEventListener("click", function (e) { e.stopPropagation(); patchStatus(c.id, "resolved"); });
+      row.appendChild(confirm);
+      var reopen = el("button", "btn-ghost", "Reopen");
+      reopen.title = "Reopen — the fix didn't address this";
+      reopen.addEventListener("click", function (e) { e.stopPropagation(); patchStatus(c.id, "open"); });
+      row.appendChild(reopen);
+    } else {
+      var res = el("button", "btn-ghost", isResolved ? "Reopen" : "Resolve");
+      res.title = (isResolved ? "Reopen" : "Resolve") + " — E when selected";
+      res.addEventListener("click", function (e) { e.stopPropagation(); patchStatus(c.id, isResolved ? "open" : "resolved"); });
+      row.appendChild(res);
+    }
     card.appendChild(row);
     return card;
   }
   function render() {
     var rs = roots();
     var open = rs.filter(function (c) { return c.status !== "resolved"; });
-    var resolved = rs.filter(function (c) { return c.status === "resolved"; });
+    // A proposal is resolved but still needs the reviewer — keep it in the
+    // main list, not hidden under the collapsed "Resolved" section. Only
+    // confirmed/legacy resolved comments settle there.
+    var proposed = rs.filter(function (c) { return c.status === "resolved" && c.resolution === "proposed"; });
+    var resolved = rs.filter(function (c) { return c.status === "resolved" && c.resolution !== "proposed"; });
 
     threadsEl.textContent = "";
-    if (!open.length && !resolved.length && !draft) {
+    if (!open.length && !proposed.length && !resolved.length && !draft) {
       threadsEl.appendChild(el("p", "muted small cmt-empty",
         "Select text, then use + Comment to leave a note. Click text to edit it \\u2014 changes save to the file automatically. Press ? for keyboard shortcuts."));
     }
     open.forEach(function (c) { threadsEl.appendChild(threadCard(c)); });
+    proposed.forEach(function (c) { threadsEl.appendChild(threadCard(c)); });
 
     resolvedWrap.textContent = "";
     if (resolved.length) {
@@ -324,7 +356,8 @@ export function shellHtml(docId: string, title: string): string {
       resolvedWrap.appendChild(wrap);
     }
 
-    document.getElementById("sidebarBtn").textContent = "Comments" + (open.length ? " (" + open.length + ")" : "");
+    var pending = open.length + proposed.length;
+    document.getElementById("sidebarBtn").textContent = "Comments" + (pending ? " (" + pending + ")" : "");
     renderPins();
     renderDraft();
   }
@@ -521,10 +554,7 @@ export function shellHtml(docId: string, title: string): string {
     var c = null;
     roots().forEach(function (x) { if (x.id === selected) c = x; });
     if (!c) return;
-    api("/comments/" + c.id, {
-      method: "PATCH", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ status: c.status === "resolved" ? "open" : "resolved" })
-    }).then(refresh).catch(fail("Update failed"));
+    patchStatus(c.id, c.status === "resolved" ? "open" : "resolved");
   }
 
   var helpOpen = false;

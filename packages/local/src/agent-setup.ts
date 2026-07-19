@@ -118,6 +118,15 @@ monitor.
    (\`--no-browser\`: the user's tab is already connected and live-reloads;
    don't open another.)
 
+   \`resolve\` only PROPOSES the comment resolved — the reviewer confirms it (or
+   reopens it if your fix missed) in the shell. A reopen is a signal your last
+   fix didn't address the note; \`marigold-draft context <file>\` lists such
+   rejected fixes (and labels each correction confirmed vs. still-proposed), so
+   read it before re-attempting. Only ever propose — confirming is the
+   reviewer's to do; the local daemon can't enforce this (the reviewer/agent
+   distinction is advisory on localhost), so treat it as a rule, not a
+   guardrail.
+
 5. **Stop looping** when the user says they're done, or a round arrives with no
    open comments and no overall comment (that's a sign-off).
 
@@ -229,7 +238,9 @@ When asked to "spin up marigold draft" (or for a local commentable draft):
    feedback JSON, exits (code 2 = timed out; re-arm).
 3. Revise the file with targeted edits (the tab live-reloads; comments re-anchor),
    then \`marigold-draft reply <file> <id> "<what changed>"\` and
-   \`marigold-draft resolve <file> <id>\`.
+   \`marigold-draft resolve <file> <id>\` — resolve only PROPOSES the fix; the
+   reviewer confirms or reopens it in the shell. \`marigold-draft context <file>\`
+   lists fixes the reviewer rejected (reopened), so re-attempt those.
 4. To share or keep a draft: \`marigold-draft share <file>\` posts it to hosted
    Marigold and prints a share link (anyone with it can view + comment) plus a
    claim link (sign in to keep it and control access).

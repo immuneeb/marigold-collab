@@ -471,6 +471,74 @@ describe("local review loop", () => {
     expect(ctx.openComments).toHaveLength(0);
   });
 
+  it("agent resolve proposes; reviewer confirm upgrades; reviewer reopen records a rejected fix (MUN-127)", async () => {
+    const f = join(dir, "mun127.html");
+    writeFileSync(f, "<h1>Doc</h1><p>this paragraph needs a rework</p>");
+    const d = (await (await post("/api/open", { path: f })).json()) as { docId: string; version: number };
+    const frame = await (await api(`/d/${d.docId}/frame`)).text();
+    const pid = /<p data-marigold-id="(mg-[0-9a-f]{10})"/.exec(frame)![1]!;
+    const c = (await (
+      await post(`/api/docs/${d.docId}/comments`, {
+        body: "rework this",
+        anchor: { marigoldId: pid, textQuote: { exact: "needs a rework" } },
+      })
+    ).json()) as { id: string };
+
+    const commentById = async (id: string) => {
+      const doc = (await (await api(`/api/docs/${d.docId}`)).json()) as {
+        comments: {
+          id: string;
+          status: string;
+          resolution?: string;
+          resolvedAtVersion?: number;
+          rejectedFixes?: { version: number; note?: string }[];
+        }[];
+      };
+      return doc.comments.find((x) => x.id === id)!;
+    };
+    const patch = (body: unknown) =>
+      api(`/api/docs/${d.docId}/comments/${c.id}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+
+    const atResolve = d.version;
+    // Agent resolve (default source) is only a PROPOSAL.
+    expect((await patch({ status: "resolved" })).ok).toBe(true);
+    let cur = await commentById(c.id);
+    expect(cur.status).toBe("resolved");
+    expect(cur.resolution).toBe("proposed");
+    expect(cur.resolvedAtVersion).toBe(atResolve);
+
+    // Reviewer reopen rejects the fix: negative signal recorded, stamp cleared.
+    expect((await patch({ status: "open", source: "reviewer" })).ok).toBe(true);
+    cur = await commentById(c.id);
+    expect(cur.status).toBe("open");
+    expect(cur.resolution ?? null).toBeNull();
+    expect(cur.resolvedAtVersion ?? null).toBeNull();
+    expect(cur.rejectedFixes).toHaveLength(1);
+    expect(cur.rejectedFixes![0]!.version).toBe(atResolve);
+
+    // Agent proposes again; the reviewer confirms — final, version preserved.
+    expect((await patch({ status: "resolved", source: "agent" })).ok).toBe(true);
+    const proposedAt = (await commentById(c.id)).resolvedAtVersion;
+    expect((await patch({ status: "resolved", source: "reviewer" })).ok).toBe(true);
+    cur = await commentById(c.id);
+    expect(cur.resolution).toBe("confirmed");
+    expect(cur.resolvedAtVersion).toBe(proposedAt);
+    // The earlier rejection is retained across the re-resolve.
+    expect(cur.rejectedFixes).toHaveLength(1);
+
+    // An agent re-resolve of the now-confirmed thread is a no-op: it neither
+    // downgrades to proposed nor re-stamps the version, and reports changed:false.
+    const noop = (await (await patch({ status: "resolved", source: "agent" })).json()) as { changed: boolean };
+    expect(noop.changed).toBe(false);
+    cur = await commentById(c.id);
+    expect(cur.resolution).toBe("confirmed");
+    expect(cur.resolvedAtVersion).toBe(proposedAt);
+  });
+
   it("wraps fragments and unwraps them on inline-edit write-back", async () => {
     const frag = join(dir, "frag.html");
     writeFileSync(frag, "<h2>Section</h2><p>Fragment body</p>");

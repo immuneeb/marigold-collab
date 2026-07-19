@@ -121,9 +121,17 @@ function printContextHuman(ctx: ContextDigest): void {
   log(`\n${bold("Corrections")} ${dim("(resolved comment → the change that addressed it)")}`);
   if (!ctx.corrections.length) log(dim("  (none)"));
   for (const p of ctx.corrections) {
-    log(`  ${ok(G.ok)} [${p.comment.id}]${p.comment.anchoredText ? ` on “${p.comment.anchoredText.slice(0, 40)}”` : ""}: ${p.comment.body}`);
+    const glyph = p.confirmed ? ok(G.ok) : warn(G.wait);
+    const label = p.confirmed ? dim("confirmed") : warn("proposed — awaiting the reviewer");
+    log(`  ${glyph} [${p.comment.id}] ${label}${p.comment.anchoredText ? ` on “${p.comment.anchoredText.slice(0, 40)}”` : ""}: ${p.comment.body}`);
     if (p.change) printChangeHuman(p.change, "      ");
     else log(dim(`      (resolved at v${p.resolvedAtVersion}; no matching change recorded)`));
+  }
+  log(`\n${bold("Rejected fixes")} ${dim("(the reviewer reopened — these versions did NOT address the comment)")}`);
+  if (!ctx.rejectedFixes.length) log(dim("  (none)"));
+  for (const rf of ctx.rejectedFixes) {
+    log(`  ${err(G.err)} [${rf.comment.id}]${rf.comment.anchoredText ? ` on “${rf.comment.anchoredText.slice(0, 40)}”` : ""}: ${rf.comment.body}`);
+    for (const f of rf.rejected) log(dim(`      ${G.err} v${f.version} rejected${f.note ? ` — ${f.note}` : ""}`));
   }
 }
 
@@ -339,13 +347,16 @@ async function main(): Promise<void> {
       const [file, commentId] = positional;
       if (!commentId) throw new Error(`usage: marigold-draft ${cmd} <file> <commentId>`);
       const { port, doc } = await withDoc(file, flags);
+      // The agent surface: a resolve is a PROPOSAL (source "agent"), which the
+      // reviewer confirms or reopens in the shell.
       const r = await fetch(`http://127.0.0.1:${port}/api/docs/${doc.docId}/comments/${commentId}`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ status: cmd === "resolve" ? "resolved" : "open" }),
+        body: JSON.stringify({ status: cmd === "resolve" ? "resolved" : "open", source: "agent" }),
       });
       if (!r.ok) throw new Error(`${cmd} failed (${r.status})`);
-      log(`${ok(G.ok)} ${cmd}d ${commentId}`);
+      if (cmd === "resolve") log(`${ok(G.ok)} proposed ${commentId} resolved ${dim("— the reviewer confirms in the shell")}`);
+      else log(`${ok(G.ok)} reopened ${commentId}`);
       return;
     }
 

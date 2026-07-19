@@ -25,6 +25,23 @@ export interface LocalComment {
    * that addressed it (the correction pair). Backward-compatible: absent on
    * comments resolved before this shipped. */
   resolvedAtVersion?: number;
+  /** How a resolved comment got there (MUN-127). An AGENT resolve is only a
+   * "proposed" resolution — a claim the reviewer confirms ("confirmed") or
+   * rejects (reopen) in the shell. Absent on legacy resolved comments (written
+   * before this shipped); those render as plain, final resolved. */
+  resolution?: "proposed" | "confirmed";
+  /** Negative signals: each time the reviewer reopened this comment, the
+   * version whose fix they judged did NOT address it. Most recent last, capped
+   * at MAX_REJECTED_FIXES. Absent until the first rejection. */
+  rejectedFixes?: RejectedFix[];
+}
+
+/** A fix the reviewer rejected by reopening — the version they judged failed to
+ * address the comment, when, and an optional note. */
+export interface RejectedFix {
+  version: number;
+  note?: string;
+  at: string; // ISO
 }
 
 /** One version bump's element-level diff, attributed and (optionally) explained
@@ -82,6 +99,91 @@ export interface Sidecar {
 
 /** Most-recent change entries retained — bounds the sidecar to a sane size. */
 export const MAX_CHANGES = 200;
+
+/** Most-recent rejected-fix signals kept per comment. */
+export const MAX_REJECTED_FIXES = 5;
+
+// ── comment status transitions (MUN-127) ────────────────────────────────────
+// One implementation of the proposal/confirm/reopen state machine, shared by
+// the server routes and any CLI path so the two surfaces can never drift. Who
+// asked matters: an agent resolve is a proposal; only the reviewer confirms it,
+// and only a reviewer reopen is a negative signal.
+
+export type StatusActor = "reviewer" | "agent";
+
+// Each transition returns whether it actually mutated the comment, so the
+// caller can skip persisting/broadcasting a no-op. Transitions are idempotent:
+// re-applying a state the comment is already in changes nothing.
+
+/** Agent resolve = a PROPOSAL. Only an open→resolved transition proposes and
+ * stamps the version; re-resolving an ALREADY-resolved comment is a no-op. That
+ * guard is load-bearing: without it an agent retry on a reviewer-CONFIRMED
+ * thread would downgrade it back to "proposed" and overwrite resolvedAtVersion,
+ * re-pointing the correction pair at a later, unrelated version. */
+export function applyAgentResolve(c: LocalComment, version: number): boolean {
+  if (c.status === "resolved") return false;
+  c.status = "resolved";
+  c.resolution = "proposed";
+  c.resolvedAtVersion = version;
+  return true;
+}
+
+/** Reviewer resolve — final. Upgrades an agent proposal to confirmed (keeping
+ * the version the agent stamped) or, with no prior proposal, stamps now. A
+ * no-op on an already-confirmed thread. */
+export function applyReviewerResolve(c: LocalComment, version: number): boolean {
+  if (c.status === "resolved" && c.resolution === "confirmed") return false;
+  c.status = "resolved";
+  c.resolution = "confirmed";
+  if (typeof c.resolvedAtVersion !== "number") c.resolvedAtVersion = version;
+  return true;
+}
+
+/** Agent reopen — a plain reopen (e.g. the agent re-opening its own thread).
+ * Not a rejection, so it records no negative signal. No-op if already open. */
+export function applyAgentReopen(c: LocalComment): boolean {
+  if (c.status === "open") return false;
+  c.status = "open";
+  delete c.resolution;
+  delete c.resolvedAtVersion;
+  return true;
+}
+
+/** Reviewer reopen — the reviewer rejects the fix. Records the version whose
+ * fix did NOT address the comment as a negative signal, then clears the stamp.
+ * No-op if the comment is already open (so a double reopen can't record a
+ * phantom second rejection or churn events). */
+export function applyReviewerReopen(c: LocalComment, note?: string): boolean {
+  if (c.status === "open") return false;
+  c.status = "open";
+  delete c.resolution;
+  if (typeof c.resolvedAtVersion === "number") {
+    const fix: RejectedFix = {
+      version: c.resolvedAtVersion,
+      at: new Date().toISOString(),
+      ...(note ? { note } : {}),
+    };
+    c.rejectedFixes = [...(c.rejectedFixes ?? []), fix].slice(-MAX_REJECTED_FIXES);
+    delete c.resolvedAtVersion;
+  }
+  return true;
+}
+
+/** Single entry point for a comment status change: dispatches by target status
+ * and who asked. `version` is the sidecar's current version; `note` rides an
+ * (optional) reviewer reopen. Returns whether the comment actually changed. */
+export function applyStatusChange(
+  c: LocalComment,
+  status: "open" | "resolved",
+  actor: StatusActor,
+  version: number,
+  note?: string,
+): boolean {
+  if (status === "resolved") {
+    return actor === "agent" ? applyAgentResolve(c, version) : applyReviewerResolve(c, version);
+  }
+  return actor === "agent" ? applyAgentReopen(c) : applyReviewerReopen(c, note);
+}
 
 export function sha256Hex(input: string): string {
   return createHash("sha256").update(input).digest("hex");
@@ -268,17 +370,28 @@ export interface OpenCommentView {
   anchoredText: string | null;
 }
 
-/** A resolved comment joined to the change that (likely) addressed it. */
+/** A resolved comment joined to the change that (likely) addressed it.
+ * `confirmed` distinguishes a reviewer-confirmed (or legacy) resolution from an
+ * agent's still-unconfirmed proposal (MUN-127). */
 export interface CorrectionView {
   comment: { id: string; body: string; anchoredText: string | null };
   resolvedAtVersion: number;
+  confirmed: boolean;
   change: ChangeView | null;
+}
+
+/** A comment the reviewer reopened at least once — a negative signal: the
+ * listed versions' fixes did NOT address it (MUN-127). */
+export interface RejectedFixView {
+  comment: { id: string; body: string; anchoredText: string | null };
+  rejected: RejectedFix[];
 }
 
 export interface ContextDigest {
   openComments: OpenCommentView[];
   recentChanges: ChangeView[];
   corrections: CorrectionView[];
+  rejectedFixes: RejectedFixView[];
 }
 
 function anchoredTextOf(c: LocalComment): string | null {
@@ -324,7 +437,9 @@ export function buildContext(sc: Sidecar): ContextDigest {
   const recentChanges = buildHistory(sc, CONTEXT_CHANGES);
 
   // A correction is the earliest change at or after the version a comment was
-  // resolved at — the edit that most likely addressed the note.
+  // resolved at — the edit that most likely addressed the note. Confirmed
+  // corrections come first; an agent's unconfirmed proposal is labeled (a
+  // legacy resolved comment, with no `resolution`, counts as confirmed/final).
   const corrections: CorrectionView[] = sc.comments
     .filter((c) => !c.parentId && c.status === "resolved" && typeof c.resolvedAtVersion === "number")
     .map((c) => {
@@ -335,9 +450,19 @@ export function buildContext(sc: Sidecar): ContextDigest {
       return {
         comment: { id: c.id, body: c.body, anchoredText: anchoredTextOf(c) },
         resolvedAtVersion: at,
+        confirmed: c.resolution !== "proposed",
         change: match ? summarizeChange(match) : null,
       };
-    });
+    })
+    .sort((a, b) => Number(b.confirmed) - Number(a.confirmed));
 
-  return { openComments, recentChanges, corrections };
+  // Negative signals: comments the reviewer reopened after a proposed fix.
+  const rejectedFixes: RejectedFixView[] = sc.comments
+    .filter((c) => !c.parentId && !!c.rejectedFixes?.length)
+    .map((c) => ({
+      comment: { id: c.id, body: c.body, anchoredText: anchoredTextOf(c) },
+      rejected: c.rejectedFixes!,
+    }));
+
+  return { openComments, recentChanges, corrections, rejectedFixes };
 }

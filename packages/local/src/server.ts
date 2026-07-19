@@ -7,6 +7,7 @@ import { ANCHOR_AGENT_JS } from "@marigold/core/agent-src";
 import { diffInstrumented, isEmptyDiff } from "@marigold/core/diff";
 import { applyInlineEdits, instrumentHtml, type CommentAnchor } from "@marigold/core/instrument";
 import {
+  applyStatusChange,
   buildContext,
   buildHistory,
   decodeBaseline,
@@ -22,6 +23,7 @@ import {
   WRAP_MAIN_CLASS,
   type LocalComment,
   type ReviewRound,
+  type StatusActor,
   type Sidecar,
 } from "./store";
 import { indexHtml, shellHtml } from "./shell";
@@ -708,14 +710,26 @@ export class LocalServer {
       if (!cm[2] && method === "PATCH") {
         const body = await readBody(req);
         if (body.status === "open" || body.status === "resolved") {
-          target.status = body.status;
-          // Stamp the version resolved-at so the context digest can pair the
-          // comment with the change that addressed it; clear it on reopen.
-          if (body.status === "resolved") target.resolvedAtVersion = session.sidecar.version;
-          else delete target.resolvedAtVersion;
-          saveSidecar(session.path, session.sidecar);
-          this.broadcast(session, "comments", {});
-          json(res, 200, { ok: true });
+          // Who asked decides the semantics (MUN-127): the shell UI sends
+          // source:"reviewer" (a resolve is final/confirmed, a reopen is a
+          // negative signal); CLI/MCP paths are the agent (a resolve is only a
+          // proposal). Absent source defaults to agent — the historical caller.
+          //
+          // `source` is client-supplied and unauthenticated: nothing on this
+          // loopback endpoint distinguishes the shell from the CLI/MCP surface,
+          // so a misbehaving local agent could send source:"reviewer" and
+          // self-confirm its own proposals. That's an ACCEPTED limitation of the
+          // single-user local model — the reviewer and the agent's operator are
+          // the same person on this 127.0.0.1 trust domain; real enforcement
+          // lives on the cloud surface's session ACL, not here.
+          const actor: StatusActor = body.source === "reviewer" ? "reviewer" : "agent";
+          const note = typeof body.note === "string" ? body.note : undefined;
+          const changed = applyStatusChange(target, body.status, actor, session.sidecar.version, note);
+          if (changed) {
+            saveSidecar(session.path, session.sidecar);
+            this.broadcast(session, "comments", {});
+          }
+          json(res, 200, { ok: true, changed, status: target.status, resolution: target.resolution ?? null });
           return;
         }
         json(res, 400, { error: "status must be open|resolved" });

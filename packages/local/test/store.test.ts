@@ -5,6 +5,11 @@ import { describe, expect, it } from "vitest";
 import { instrumentHtml } from "@marigold/core/instrument";
 import { diffInstrumented } from "@marigold/core/diff";
 import {
+  applyAgentReopen,
+  applyAgentResolve,
+  applyReviewerReopen,
+  applyReviewerResolve,
+  applyStatusChange,
   buildContext,
   buildHistory,
   decodeBaseline,
@@ -19,6 +24,7 @@ import {
   trimSummary,
   wrapFragment,
   MAX_CHANGES,
+  MAX_REJECTED_FIXES,
   type LocalChange,
   type LocalComment,
 } from "../src/store";
@@ -209,6 +215,46 @@ describe("history + context digest", () => {
     expect(hist[0]!.diffStats.changed).toBeGreaterThan(0);
   });
 
+  it("buildContext orders confirmed corrections first, labels proposals, and lists rejected fixes", () => {
+    const dir = mkdtempSync(join(tmpdir(), "mgl-"));
+    const file = join(dir, "cx.html");
+    writeFileSync(file, "<p>x</p>");
+    const sc = loadSidecar(file);
+
+    // A confirmed correction (reviewer-confirmed at v2)…
+    const confirmed = comment({ textQuote: { exact: "confirmed one" } }, "resolved");
+    confirmed.id = "c1";
+    confirmed.resolution = "confirmed";
+    confirmed.resolvedAtVersion = 2;
+    // …an agent proposal still awaiting the reviewer (proposed at v3)…
+    const proposed = comment({ textQuote: { exact: "proposed one" } }, "resolved");
+    proposed.id = "c2";
+    proposed.resolution = "proposed";
+    proposed.resolvedAtVersion = 3;
+    // …a legacy resolved comment (no `resolution`) counts as confirmed/final…
+    const legacy = comment({ textQuote: { exact: "legacy one" } }, "resolved");
+    legacy.id = "c3";
+    legacy.resolvedAtVersion = 1;
+    // …and a reopened comment carrying a rejected-fix signal.
+    const reopened = comment({ textQuote: { exact: "reopened one" } }, "open");
+    reopened.id = "c4";
+    reopened.rejectedFixes = [{ version: 4, at: new Date().toISOString(), note: "still wrong" }];
+    sc.comments.push(confirmed, proposed, legacy, reopened);
+    pushChange(sc, change(2, "AI", "the fix"));
+
+    const ctx = buildContext(sc);
+    // Proposal must never sort ahead of a confirmed/legacy correction.
+    expect(ctx.corrections.map((c) => c.confirmed)).toEqual([true, true, false]);
+    const proposedView = ctx.corrections.find((c) => c.comment.id === "c2")!;
+    expect(proposedView.confirmed).toBe(false);
+    expect(ctx.corrections.find((c) => c.comment.id === "c3")!.confirmed).toBe(true); // legacy → confirmed
+    // The reopened comment is both an open comment AND a rejected-fix signal.
+    expect(ctx.rejectedFixes).toHaveLength(1);
+    expect(ctx.rejectedFixes[0]!.comment.id).toBe("c4");
+    expect(ctx.rejectedFixes[0]!.rejected[0]!.version).toBe(4);
+    expect(ctx.rejectedFixes[0]!.rejected[0]!.note).toBe("still wrong");
+  });
+
   it("buildContext pairs a resolved comment with the change at/after its version", () => {
     const dir = mkdtempSync(join(tmpdir(), "mgl-"));
     const file = join(dir, "c.html");
@@ -230,5 +276,118 @@ describe("history + context digest", () => {
     expect(ctx.corrections[0]!.comment.id).toBe("c2");
     expect(ctx.corrections[0]!.change!.version).toBe(3);
     expect(ctx.corrections[0]!.change!.intent).toBe("the fix");
+  });
+});
+
+describe("status transitions (MUN-127)", () => {
+  it("an agent resolve is only a proposal, stamped at the current version", () => {
+    const c = comment({ textQuote: { exact: "x" } }, "open");
+    applyAgentResolve(c, 5);
+    expect(c.status).toBe("resolved");
+    expect(c.resolution).toBe("proposed");
+    expect(c.resolvedAtVersion).toBe(5);
+  });
+
+  it("a reviewer confirm upgrades a proposal to confirmed and keeps its version", () => {
+    const c = comment({ textQuote: { exact: "x" } }, "open");
+    applyAgentResolve(c, 5); // agent proposes at v5
+    applyReviewerResolve(c, 9); // reviewer confirms later, at v9
+    expect(c.status).toBe("resolved");
+    expect(c.resolution).toBe("confirmed");
+    expect(c.resolvedAtVersion).toBe(5); // confirming keeps the proposal's version
+  });
+
+  it("a fresh reviewer resolve (no prior proposal) is confirmed and stamps now", () => {
+    const c = comment({ textQuote: { exact: "x" } }, "open");
+    applyReviewerResolve(c, 7);
+    expect(c.resolution).toBe("confirmed");
+    expect(c.resolvedAtVersion).toBe(7);
+  });
+
+  it("a reviewer reopen records the rejected fix and clears the stamp", () => {
+    const c = comment({ textQuote: { exact: "x" } }, "open");
+    applyAgentResolve(c, 5);
+    applyReviewerReopen(c, "not what I meant");
+    expect(c.status).toBe("open");
+    expect(c.resolution).toBeUndefined();
+    expect(c.resolvedAtVersion).toBeUndefined();
+    expect(c.rejectedFixes).toHaveLength(1);
+    expect(c.rejectedFixes![0]!.version).toBe(5);
+    expect(c.rejectedFixes![0]!.note).toBe("not what I meant");
+  });
+
+  it("an agent reopen clears state without recording a rejection", () => {
+    const c = comment({ textQuote: { exact: "x" } }, "open");
+    applyAgentResolve(c, 5);
+    applyAgentReopen(c);
+    expect(c.status).toBe("open");
+    expect(c.resolution).toBeUndefined();
+    expect(c.resolvedAtVersion).toBeUndefined();
+    expect(c.rejectedFixes).toBeUndefined(); // agent reopen is not a negative signal
+  });
+
+  it("rejected fixes are capped at MAX_REJECTED_FIXES, most recent kept", () => {
+    const c = comment({ textQuote: { exact: "x" } }, "open");
+    for (let v = 1; v <= MAX_REJECTED_FIXES + 3; v++) {
+      applyStatusChange(c, "resolved", "agent", v);
+      applyStatusChange(c, "open", "reviewer", v);
+    }
+    expect(c.rejectedFixes).toHaveLength(MAX_REJECTED_FIXES);
+    // oldest dropped, newest retained
+    expect(c.rejectedFixes![0]!.version).toBe(4);
+    expect(c.rejectedFixes!.at(-1)!.version).toBe(MAX_REJECTED_FIXES + 3);
+  });
+
+  it("applyStatusChange dispatches by actor: agent resolve proposes, reviewer resolve confirms", () => {
+    const a = comment({ textQuote: { exact: "a" } }, "open");
+    applyStatusChange(a, "resolved", "agent", 3);
+    expect(a.resolution).toBe("proposed");
+    const b = comment({ textQuote: { exact: "b" } }, "open");
+    applyStatusChange(b, "resolved", "reviewer", 3);
+    expect(b.resolution).toBe("confirmed");
+  });
+
+  it("an agent re-resolve does NOT downgrade a reviewer-confirmed thread or re-stamp its version", () => {
+    const c = comment({ textQuote: { exact: "x" } }, "open");
+    applyAgentResolve(c, 3); // agent proposes at v3
+    applyReviewerResolve(c, 3); // reviewer confirms at v3
+    // Agent retries a resolve later, at v7 — must be a no-op.
+    const changed = applyAgentResolve(c, 7);
+    expect(changed).toBe(false);
+    expect(c.resolution).toBe("confirmed"); // NOT downgraded to proposed
+    expect(c.resolvedAtVersion).toBe(3); // NOT re-pointed to v7
+  });
+
+  it("an agent re-resolve of its own proposal is a no-op (keeps version, stays proposed)", () => {
+    const c = comment({ textQuote: { exact: "x" } }, "open");
+    applyAgentResolve(c, 3);
+    const changed = applyAgentResolve(c, 7);
+    expect(changed).toBe(false);
+    expect(c.resolution).toBe("proposed");
+    expect(c.resolvedAtVersion).toBe(3);
+  });
+
+  it("a reviewer resolve is idempotent on an already-confirmed thread", () => {
+    const c = comment({ textQuote: { exact: "x" } }, "open");
+    applyReviewerResolve(c, 3);
+    const changed = applyReviewerResolve(c, 9);
+    expect(changed).toBe(false);
+    expect(c.resolvedAtVersion).toBe(3);
+  });
+
+  it("a double reviewer reopen records exactly one rejected fix", () => {
+    const c = comment({ textQuote: { exact: "x" } }, "open");
+    applyAgentResolve(c, 5);
+    const first = applyReviewerReopen(c);
+    const second = applyReviewerReopen(c); // already open — no-op
+    expect(first).toBe(true);
+    expect(second).toBe(false);
+    expect(c.rejectedFixes).toHaveLength(1);
+    expect(c.rejectedFixes![0]!.version).toBe(5);
+  });
+
+  it("an agent reopen is a no-op when the comment is already open", () => {
+    const c = comment({ textQuote: { exact: "x" } }, "open");
+    expect(applyAgentReopen(c)).toBe(false);
   });
 });
