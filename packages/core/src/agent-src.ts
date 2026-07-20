@@ -14,6 +14,9 @@
 export const ANCHOR_AGENT_JS = String.raw`(function () {
   "use strict";
   var MG = "__mg";
+  // Boot marker: lets a page (or a support diagnostic) distinguish "agent tag
+  // present but script never ran" (blocked/failed load) from a live agent.
+  try { document.documentElement.setAttribute("data-mg-agent-boot", "1"); } catch (e) {}
   function send(msg) { msg[MG] = 1; try { parent.postMessage(msg, "*"); } catch (e) {} }
   var tracked = [];
   var commentMode = false;

@@ -519,7 +519,7 @@ export class LocalServer {
       return;
     }
 
-    if (p === "/__mg/agent.js" && method === "GET") {
+    if ((p === "/__mg/agent.js" || p === "/__mg/anchor.js") && method === "GET") {
       res.writeHead(200, {
         "content-type": "text/javascript; charset=utf-8",
         "cache-control": "public, max-age=3600",

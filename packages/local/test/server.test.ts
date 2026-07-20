@@ -50,7 +50,7 @@ describe("local review loop", () => {
     const r = await api(`/d/${docId}/frame`);
     const html = await r.text();
     expect(html).toContain("data-marigold-id");
-    expect(html).toContain("/__mg/agent.js");
+    expect(html).toContain("/__mg/anchor.js");
     const csp = r.headers.get("content-security-policy")!;
     expect(csp).toContain("connect-src 'none'");
     // Explicit host-source: 'self' is useless to a sandboxed (opaque-origin)
@@ -65,7 +65,7 @@ describe("local review loop", () => {
     // New-comment is bound to plain C, not the macOS-colliding ⌘⌥M chord.
     expect(shell).toContain('title="Add a comment — C"');
     expect(shell).not.toContain("KeyM");
-    const agent = await (await api("/__mg/agent.js")).text();
+    const agent = await (await api("/__mg/anchor.js")).text();
     expect(agent).toContain("postMessage");
   });
 

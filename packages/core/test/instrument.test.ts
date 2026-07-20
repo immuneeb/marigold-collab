@@ -22,7 +22,7 @@ describe("instrument", () => {
     const b = instrumentHtml(html);
     expect(a).toBe(b);
     expect(a).toMatch(/data-marigold-id="mg-[0-9a-f]{10}"/);
-    expect(a).toContain("/__mg/agent.js");
+    expect(a).toContain("/__mg/anchor.js");
   });
 
   it("is idempotent: ids preserved, single agent tag", () => {
@@ -38,6 +38,7 @@ describe("instrument", () => {
     const clean = deinstrumentHtml(instrumentHtml(html));
     expect(clean).not.toContain("data-marigold-id");
     expect(clean).not.toContain("__mg/agent.js");
+    expect(clean).not.toContain("__mg/anchor.js");
   });
 
   it("resolveAnchor: marigoldId → css → textQuote → orphan", () => {
@@ -69,6 +70,7 @@ describe("instrument", () => {
     expect(out).toContain("Edited <b>title</b>");
     expect(out).not.toContain("data-marigold-id"); // saved source is clean
     expect(out).not.toContain("__mg/agent.js");
+    expect(out).not.toContain("__mg/anchor.js");
     // unchanged structure → same id on re-instrumentation (comments re-anchor)
     expect(idOf(instrumentHtml(out), "h1")).toBe(h1);
   });

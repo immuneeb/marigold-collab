@@ -4,11 +4,14 @@ import { sha256Hex } from "./hash";
 // Bump when the agent's protocol/behavior changes. The render origin rewrites
 // every served doc's tag to AGENT_SRC, so a bump busts the browser cache for
 // ALL docs (existing ones included) without needing a re-save.
-export const AGENT_VERSION = 10;
-export const AGENT_SRC = `/__mg/agent.js?v=${AGENT_VERSION}`;
+export const AGENT_VERSION = 11;
+// Served as "anchor.js": ad/privacy blocklists (EasyPrivacy et al.) block
+// */agent.js as a tracker filename (New Relic, Datadog agents), which killed
+// the whole comment layer for readers running iOS/Safari content blockers.
+export const AGENT_SRC = `/__mg/anchor.js?v=${AGENT_VERSION}`;
 const AGENT_TAG = `<script src="${AGENT_SRC}" data-mg-agent></script>`;
 // Matches any prior agent tag src so serve-time rewrite can normalize it.
-export const AGENT_SRC_RE = /\/__mg\/agent\.js(\?v=\d+)?/g;
+export const AGENT_SRC_RE = /\/__mg\/(?:agent|anchor)\.js(\?v=\d+)?/g;
 const SKIP = new Set([
   "script",
   "style",
