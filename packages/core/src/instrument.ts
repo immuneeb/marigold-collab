@@ -4,7 +4,7 @@ import { sha256Hex } from "./hash";
 // Bump when the agent's protocol/behavior changes. The render origin rewrites
 // every served doc's tag to AGENT_SRC, so a bump busts the browser cache for
 // ALL docs (existing ones included) without needing a re-save.
-export const AGENT_VERSION = 11;
+export const AGENT_VERSION = 12;
 // Served as "anchor.js": ad/privacy blocklists (EasyPrivacy et al.) block
 // */agent.js as a tracker filename (New Relic, Datadog agents), which killed
 // the whole comment layer for readers running iOS/Safari content blockers.
@@ -12,6 +12,12 @@ export const AGENT_SRC = `/__mg/anchor.js?v=${AGENT_VERSION}`;
 const AGENT_TAG = `<script src="${AGENT_SRC}" data-mg-agent></script>`;
 // Matches any prior agent tag src so serve-time rewrite can normalize it.
 export const AGENT_SRC_RE = /\/__mg\/(?:agent|anchor)\.js(\?v=\d+)?/g;
+// Matches the FULL baked agent tag (we always generate this exact shape) so
+// serve-time can swap it for an inline copy of the agent. External script
+// requests from the render origin get stripped by Safari content blockers
+// (vercel.app third-party script rules) — inline scripts are untouchable.
+export const AGENT_TAG_RE =
+  /<script src="\/__mg\/(?:agent|anchor)\.js(?:\?v=\d+)?" data-mg-agent><\/script>/g;
 const SKIP = new Set([
   "script",
   "style",
