@@ -268,7 +268,7 @@ export const ANCHOR_AGENT_JS = String.raw`(function () {
     send({ type: "selection", sel: null });
     editingEl = el; editingOrig = el.innerHTML;
     el.contentEditable = "true";
-    el.style.outline = "2px solid #e8870f"; el.style.outlineOffset = "2px";
+    el.style.outline = "2px solid #EE8804"; el.style.outlineOffset = "2px";
     el.addEventListener("blur", onEditBlur);
     el.focus();
     // Place the caret where the user clicked (single-click-to-type feel).
@@ -332,7 +332,7 @@ export const ANCHOR_AGENT_JS = String.raw`(function () {
   try { coarse = !!(window.matchMedia && window.matchMedia("(pointer: coarse)").matches); } catch (e) {}
   var controls = document.createElement("div");
   controls.id = "__mg_controls";
-  controls.style.cssText = "position:fixed;display:none;z-index:2147483647;background:#fff;border:1px solid #e8870f;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,.18);padding:2px;gap:2px;align-items:center;font:12px/1 system-ui,sans-serif;touch-action:manipulation;";
+  controls.style.cssText = "position:fixed;display:none;z-index:2147483647;background:#fff;border:1px solid #EE8804;border-radius:8px;box-shadow:0 2px 6px rgba(43,33,23,.18);padding:2px;gap:2px;align-items:center;font:12px/1 system-ui,sans-serif;touch-action:manipulation;";
   var curTarget = null;
   function mkBtn(label, title, fn) {
     var b = document.createElement("button");
@@ -342,9 +342,9 @@ export const ANCHOR_AGENT_JS = String.raw`(function () {
     // Coarse pointers get ~40px tap targets (was 20px) so the controls are
     // actually usable with a thumb.
     b.style.cssText = coarse
-      ? "border:0;background:transparent;cursor:pointer;padding:12px 14px;border-radius:6px;font-size:18px;line-height:1;min-width:44px;color:#b8690a;-webkit-tap-highlight-color:transparent;"
-      : "border:0;background:transparent;cursor:pointer;padding:4px 6px;border-radius:5px;font-size:12px;color:#b8690a;";
-    b.addEventListener("mouseenter", function () { b.style.background = "#fdf3e3"; });
+      ? "border:0;background:transparent;cursor:pointer;padding:12px 14px;border-radius:6px;font-size:18px;line-height:1;min-width:44px;color:#9A5B06;-webkit-tap-highlight-color:transparent;"
+      : "border:0;background:transparent;cursor:pointer;padding:4px 6px;border-radius:5px;font-size:12px;color:#9A5B06;";
+    b.addEventListener("mouseenter", function () { b.style.background = "#FAF0DC"; });
     b.addEventListener("mouseleave", function () { b.style.background = "transparent"; });
     // Don't let a tap on a control steal focus from the element being edited —
     // that would blur→save→clear curTarget before this handler's fn runs.
@@ -506,9 +506,9 @@ export const ANCHOR_AGENT_JS = String.raw`(function () {
   var CTRL_STYLE =
     "mg-control{display:inline-flex;gap:6px;align-items:center;vertical-align:middle}" +
     "mg-control [data-mg-tap]{cursor:pointer;-webkit-user-select:none;user-select:none}" +
-    "mg-control [data-mg-ui]{border:1px solid #d8d8d8;background:transparent;border-radius:999px;padding:4px 10px;font:13px/1 system-ui,sans-serif;color:inherit;opacity:.75}" +
-    "mg-control [data-mg-ui]:hover{border-color:#e8870f;opacity:1}" +
-    "mg-control [data-mg-ui][data-mg-sel]{background:#fdf3e3;border-color:#e8870f;color:#b8690a;opacity:1}" +
+    "mg-control [data-mg-ui]{border:1px solid #E0D5BC;background:transparent;border-radius:999px;padding:4px 10px;font:13px/1 system-ui,sans-serif;color:inherit;opacity:.75}" +
+    "mg-control [data-mg-ui]:hover{border-color:#EE8804;opacity:1}" +
+    "mg-control [data-mg-ui][data-mg-sel]{background:#FAF0DC;border-color:#EE8804;color:#9A5B06;opacity:1}" +
     "mg-control[data-mg-disabled] [data-mg-tap]{pointer-events:none;opacity:.45}";
   function injectCtrlStyle() {
     if (document.getElementById("__mg_ctrl_style")) return;
