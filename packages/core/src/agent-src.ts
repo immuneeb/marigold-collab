@@ -21,6 +21,10 @@ export const ANCHOR_AGENT_JS = String.raw`(function () {
   var tracked = [];
   var commentMode = false;
   var editEnabled = false;
+  // Coarse pointers only: taps start an edit ONLY while the shell's toolbar
+  // ✎ toggle is armed (bare taps happen constantly while scrolling and
+  // commenting). Fine pointers ignore this — click-to-edit stays direct.
+  var editArmed = false;
 
   function cssEscape(s) {
     return (window.CSS && CSS.escape) ? CSS.escape(s) : String(s).replace(/["\\\]]/g, "\\$&");
@@ -240,7 +244,9 @@ export const ANCHOR_AGENT_JS = String.raw`(function () {
     }
   }, { capture: true, passive: true });
 
-  // ── in-place editing: double-click → contentEditable, blur = auto-save ──
+  // ── in-place editing: contentEditable, blur = auto-save. Entry differs by
+  // pointer: mouse click edits directly (misclicks are rare and Escape
+  // reverts); touch requires the shell's ✎ toggle armed (editArmed above). ──
   var editingEl = null, editingOrig = "";
   function onEditBlur() { endEdit(true); }
   function endEdit(save) {
@@ -367,6 +373,9 @@ export const ANCHOR_AGENT_JS = String.raw`(function () {
       n.removeAttribute("data-marigold-id");
     });
   }
+  // Desktop hover affordance only — on touch the controls appear mid-edit,
+  // where an Edit button would be a dead 44px slot in a cramped bar.
+  if (!coarse) mkBtn("✎", "Edit text", function (el) { beginEdit(el); });
   mkBtn("↑", "Move up", function (el) { swap(el, -1); });
   mkBtn("↓", "Move down", function (el) { swap(el, 1); });
   mkBtn("⧉", "Duplicate", function (el) {
@@ -447,10 +456,11 @@ export const ANCHOR_AGENT_JS = String.raw`(function () {
   }
 
   // A tap resolved from a pointerup (touch/pen) or a mouse click. Comment mode
-  // anchors a comment where you tapped; otherwise a tap on editable text starts
-  // an in-place edit (beginEdit reveals the block controls on coarse pointers).
-  // Returns true when it acted, so the pointerup caller can swallow the trailing
-  // synthetic click.
+  // anchors a comment where you tapped. Otherwise, on editable text: a mouse
+  // click starts an in-place edit directly, while a touch tap edits only when
+  // the shell's ✎ toggle is armed — so taps meant as scrolls or comment
+  // gestures can't fall into edit mode. Returns true when it acted, so the
+  // pointerup caller can swallow the trailing synthetic click.
   function handleTap(target, x, y, ev) {
     if (controls.contains(target)) return false;
     // Explicit comment mode: tap any element to anchor a comment there.
@@ -461,7 +471,6 @@ export const ANCHOR_AGENT_JS = String.raw`(function () {
       send({ type: "placed", anchor: anchorFor(target, null), point: { x: x, y: y } });
       return true;
     }
-    // Single-tap to edit: place a caret and start typing (Google-Docs feel).
     if (!editEnabled || editingEl) return false;
     if (hasSelection()) return false;    // a drag-select → comment, not edit
     // Tapping a link/button or blank space while editing dismisses the controls
@@ -469,7 +478,10 @@ export const ANCHOR_AGENT_JS = String.raw`(function () {
     if (isInteractive(target)) { if (coarse) hideControls(); return false; }
     var el = nearestMg(target);
     if (!el || el === document.body) { if (coarse) hideControls(); return false; }
-    beginEdit(el, caretFromPoint(x, y)); // reveals controls on coarse pointers
+    if (coarse && !editArmed) return false;
+    // Caret at the tap/click point (Google-Docs feel); on coarse pointers
+    // beginEdit also reveals the block controls.
+    beginEdit(el, caretFromPoint(x, y));
     return true;
   }
   document.addEventListener("click", function (e) {
@@ -620,7 +632,14 @@ export const ANCHOR_AGENT_JS = String.raw`(function () {
     if (d.type === "track") { tracked = d.ids || []; reportRects(); }
     else if (d.type === "getRects") { reportRects(); }
     else if (d.type === "commentMode") { commentMode = !!d.on; setCommentModeUI(commentMode); if (commentMode) hideControls(); }
-    else if (d.type === "editable") { editEnabled = !!d.on; if (!d.on) { endEdit(false); hideControls(); } }
+    else if (d.type === "editable") {
+      editEnabled = !!d.on;
+      var wasArmed = editArmed;
+      editArmed = !!d.armed;
+      if (!editEnabled) { endEdit(false); hideControls(); }
+      // Disarming the ✎ toggle mid-edit means "done" — save, don't revert.
+      else if (wasArmed && !editArmed) { endEdit(true); hideControls(); }
+    }
     else if (d.type === "clearSelection") { try { window.getSelection().removeAllRanges(); } catch (err) {} lastSelKey = ""; }
     else if (d.type === "scrollTo") { var el = elFor(d.id); if (el) el.scrollIntoView({ block: "center", behavior: "smooth" }); }
     else if (d.type === "interactions") { applyInteractions(d); }

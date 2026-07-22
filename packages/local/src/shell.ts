@@ -238,7 +238,10 @@ export function shellHtml(docId: string, title: string): string {
       .map(function (c) { return c.anchor.marigoldId; });
   }
   function syncAgent() {
-    post({ type: "editable", on: true });
+    // armed:true — the local shell is a desktop surface with no ✎ toggle, so
+    // touch tap-to-edit stays direct here (the agent requires armed on coarse
+    // pointers; without it a phone hitting the LAN shell couldn't edit).
+    post({ type: "editable", on: true, armed: true });
     post({ type: "track", ids: trackedIds() });
   }
 
