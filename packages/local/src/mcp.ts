@@ -47,9 +47,15 @@ live-reloads, comments re-anchor) → reply_to_comment + resolve_comment →
 get_feedback again for the next round. resolve_comment only PROPOSES a
 resolution — the reviewer confirms it (or reopens if the fix missed) in the
 shell. note_intent records the "why" for the next save; get_history and
-get_context replay what changed, pair resolved comments with the corrections
-that addressed them, and surface fixes the reviewer rejected (reopened) as
-negative signals. Drafts are plain HTML: full documents or
+get_context replay what changed and lay out each thread as an EPISODE — its
+full comment chain, every attempt, and where it landed. Read the whole chain
+before judging: a reopen may be a follow-up refinement, not a rejection. At a
+round's close, distill durable cross-draft learnings with save_insight — but
+first reaffirm/refine/contradict a matching existing insight rather than
+spawning a near-duplicate; get_context lists current insights (stale ones
+first — staleness = fresh reviewer activity on a cited thread) then
+unsynthesized episodes, and get_insight expands one insight with its evidence
+episodes. Drafts are plain HTML: full documents or
 fragments (and .svg), self-contained (external network is blocked by CSP,
 matching cloud Marigold). Before authoring, call start_analysis (pass mode:
 analyze | learn | judge | decide | organize | tune | do | track — pick by what
@@ -327,7 +333,7 @@ export async function runMcp(): Promise<void> {
     {
       title: "Get context",
       description:
-        "get the draft's catch-up digest: the open comments (with anchored text), the recent changes, correction pairs (a resolved comment joined to the change that addressed it — confirmed ones first, an agent's unconfirmed proposals labeled), and rejected fixes (comments the reviewer reopened, with the versions whose fixes did NOT address them).",
+        "get the draft's catch-up digest: durable insights FIRST (owner-level learnings across all drafts, stale ones first — an insight goes stale when a cited thread gets fresh REVIEWER activity; reaffirm/refine before creating a near-duplicate), then the open comments, the recent changes, and this draft's unsynthesized episodes (each thread's full comment chain, every attempt, and where it landed — read the whole chain, a reopen may be a follow-up, not a rejection).",
       inputSchema: { path: z.string() },
     },
     async ({ path }) => {
@@ -335,6 +341,72 @@ export async function runMcp(): Promise<void> {
         const { port, doc } = await open(path, undefined, false);
         const r = await fetch(`http://127.0.0.1:${port}/api/docs/${doc.docId}/context`);
         if (!r.ok) return fail(`context failed (${r.status})`);
+        return ok(await r.json());
+      } catch (e) {
+        return fail((e as Error).message);
+      }
+    },
+  );
+
+  server.registerTool(
+    "save_insight",
+    {
+      title: "Save insight",
+      description:
+        "record a durable, cross-draft learning distilled from review episodes — owner-level, not per-draft. Evidence is mandatory: cite the {docId, commentId} threads it came from. Statements are capped at 140 characters. relation: \"new\" creates; \"reinforces\"/\"refines\"/\"contradicts\" update the insight named by `updates`. Creating (or refining into a) statement close to an existing ACTIVE insight is refused with `{saved:false, needsDistinction:true, candidates:[{id,statement}], hint}` — reaffirm one (updates + relation:\"reinforces\"), refine it (relation:\"refines\" + a new statement, which supersedes the old), contradict it (relation:\"contradicts\" — flags it, keeps it), or resend with distinctFrom listing those candidate ids. On success: `{saved:true, insight:{id,statement,status,relation,evidenceCount,updatedAt}, supersededId?}`. Distill at a review round's close.",
+      inputSchema: {
+        statement: z.string().optional().describe("The learning, one sentence (≤140 chars). Required for new + refines."),
+        evidence: z
+          .array(
+            z.object({
+              docId: z.string(),
+              commentId: z.string(),
+              relation: z.enum(["supports", "refines", "contradicts"]).optional(),
+            }),
+          )
+          .describe("≥1 {docId, commentId} pairs that name real comments in a draft"),
+        updates: z.string().optional().describe("The existing insight this reinforces/refines/contradicts"),
+        relation: z
+          .enum(["new", "reinforces", "refines", "contradicts"])
+          .optional()
+          .describe("new = create; reinforces = add evidence to `updates`; refines = new insight supersedes `updates`; contradicts = flag `updates` false"),
+        distinctFrom: z
+          .array(z.string())
+          .optional()
+          .describe("ids of similar active insights you've decided are genuinely distinct — clears the forced choice (new + refines)"),
+        createdByLabel: z.string().optional(),
+      },
+    },
+    async ({ statement, evidence, updates, relation, distinctFrom, createdByLabel }) => {
+      try {
+        const port = await ensureServer();
+        const r = await fetch(`http://127.0.0.1:${port}/api/insights`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ statement, evidence, updates, relation, distinctFrom, createdByLabel }),
+        });
+        const data = await r.json();
+        if (!r.ok && r.status >= 500) return fail(`save_insight failed (${r.status})`);
+        return ok(data); // {saved:true,…} | {saved:false, needsDistinction, candidates, hint} | {saved:false, error}
+      } catch (e) {
+        return fail((e as Error).message);
+      }
+    },
+  );
+
+  server.registerTool(
+    "get_insight",
+    {
+      title: "Get insight",
+      description:
+        "expand one insight by id: its statement, status, evidence links, and the full review episode behind each cited comment (chain + attempts + outcome).",
+      inputSchema: { id: z.string() },
+    },
+    async ({ id }) => {
+      try {
+        const port = await ensureServer();
+        const r = await fetch(`http://127.0.0.1:${port}/api/insights/${id}`);
+        if (!r.ok) return fail(`get_insight failed (${r.status})`);
         return ok(await r.json());
       } catch (e) {
         return fail((e as Error).message);

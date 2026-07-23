@@ -26,7 +26,8 @@ import {
   type OpenResult,
   type ServerState,
 } from "./client";
-import { type ChangeView, type ContextDigest } from "./store";
+import { type ChangeView, type ContextDigest, type Episode } from "./store";
+import { type Insight, type InsightSummary } from "./insights";
 import { LocalServer, type ReviewPayload } from "./server";
 import { formatShareResult, ShareError, shareDraft } from "./share";
 
@@ -109,29 +110,65 @@ function printChangeHuman(c: ChangeView, indent = "  "): void {
   for (const e of c.removed.slice(0, 3)) log(`${indent}    ${dim(`− ${e.tag}`)} “${e.text.slice(0, 60)}”`);
 }
 
+/** Status glyph for an insight: active green, contradicted red, retired dim. */
+function insightGlyph(status: InsightSummary["status"]): string {
+  if (status === "active") return ok(G.ok);
+  if (status === "contradicted") return err(G.err);
+  return dim(G.off);
+}
+
+function printInsightSummary(i: InsightSummary, indent = "  "): void {
+  const dirty = i.evidenceDirty ? warn(" ● stale") : "";
+  log(`${indent}${insightGlyph(i.status)} [${i.id}] ${dim(`(${i.status}, ${i.evidenceCount} evidence)`)}${dirty} ${i.statement}`);
+}
+
+function terminalLabel(t: Episode["terminalState"]): string {
+  if (t === "confirmed") return ok("confirmed");
+  if (t === "proposed") return warn("proposed");
+  return dim("open");
+}
+
+function printEpisodeHuman(ep: Episode, indent = "  "): void {
+  const head = ep.comments[0];
+  const who = head ? `${head.author}${ep.kind === "overall" ? " (overall feedback)" : ""}` : "thread";
+  log(`${indent}[${ep.threadId}] ${who}${ep.anchoredText ? ` on “${ep.anchoredText.slice(0, 50)}”` : ""} ${dim("—")} ${terminalLabel(ep.terminalState)}${ep.reopenCount ? dim(` · ${ep.reopenCount} reopen${ep.reopenCount > 1 ? "s" : ""}`) : ""}`);
+  for (const c of ep.comments) log(`${indent}    ${c.byAssistant ? dim("AI") : c.author}: ${c.body}`);
+  for (const a of ep.attempts) {
+    const verb = a.kind === "rejected" ? err("reopened after v" + a.version) : dim("resolved at v" + a.version);
+    log(`${indent}    ${dim("·")} ${verb}${a.note ? dim(` — ${a.note}`) : ""}`);
+    if (a.change) printChangeHuman(a.change, indent + "      ");
+  }
+}
+
 function printContextHuman(ctx: ContextDigest): void {
-  log(bold("Open comments"));
+  log(`${bold("Insights")} ${dim("(durable learnings — reaffirm/refine/contradict before creating a new one)")}`);
+  if (!ctx.insights.length) log(dim("  (none yet)"));
+  for (const i of ctx.insights) printInsightSummary(i);
+
+  log(`\n${bold("Open comments")}`);
   if (!ctx.openComments.length) log(dim("  (none)"));
   for (const c of ctx.openComments) {
     log(`  [${c.id}] ${c.author}${c.kind === "overall" ? " (overall feedback)" : ""}${c.anchoredText ? ` on “${c.anchoredText.slice(0, 60)}”` : ""}: ${c.body}`);
   }
+
   log(`\n${bold("Recent changes")}`);
   if (!ctx.recentChanges.length) log(dim("  (none)"));
   for (const c of ctx.recentChanges) printChangeHuman(c);
-  log(`\n${bold("Corrections")} ${dim("(resolved comment → the change that addressed it)")}`);
-  if (!ctx.corrections.length) log(dim("  (none)"));
-  for (const p of ctx.corrections) {
-    const glyph = p.confirmed ? ok(G.ok) : warn(G.wait);
-    const label = p.confirmed ? dim("confirmed") : warn("proposed — awaiting the reviewer");
-    log(`  ${glyph} [${p.comment.id}] ${label}${p.comment.anchoredText ? ` on “${p.comment.anchoredText.slice(0, 40)}”` : ""}: ${p.comment.body}`);
-    if (p.change) printChangeHuman(p.change, "      ");
-    else log(dim(`      (resolved at v${p.resolvedAtVersion}; no matching change recorded)`));
+
+  log(`\n${bold("Episodes")} ${dim("(unsynthesized threads — read the full chain; a reopen may be a follow-up, not a rejection)")}`);
+  if (!ctx.episodes.length) log(dim("  (none)"));
+  for (const ep of ctx.episodes) printEpisodeHuman(ep);
+}
+
+function printInsightsHuman(list: Insight[]): void {
+  if (!list.length) {
+    log(dim("no insights yet — distill one at a review round's close with `save_insight` / the MCP tool"));
+    return;
   }
-  log(`\n${bold("Rejected fixes")} ${dim("(the reviewer reopened — these versions did NOT address the comment)")}`);
-  if (!ctx.rejectedFixes.length) log(dim("  (none)"));
-  for (const rf of ctx.rejectedFixes) {
-    log(`  ${err(G.err)} [${rf.comment.id}]${rf.comment.anchoredText ? ` on “${rf.comment.anchoredText.slice(0, 40)}”` : ""}: ${rf.comment.body}`);
-    for (const f of rf.rejected) log(dim(`      ${G.err} v${f.version} rejected${f.note ? ` — ${f.note}` : ""}`));
+  for (const i of list) {
+    const dirty = i.evidenceDirty ? warn(" ● stale") : "";
+    const superseded = i.supersededById ? dim(` → ${i.supersededById}`) : "";
+    log(`${insightGlyph(i.status)} [${i.id}] ${dim(`(${i.status}, ${i.evidence.length} evidence)`)}${dirty}${superseded} ${i.statement}`);
   }
 }
 
@@ -385,6 +422,17 @@ async function main(): Promise<void> {
       return;
     }
 
+    case "insights": {
+      // Machine-level, not per-draft — no <file> argument.
+      const port = await ensureServer(flags.port ? Number(flags.port) : undefined);
+      const r = await fetch(`http://127.0.0.1:${port}/api/insights`);
+      if (!r.ok) throw new Error(`insights failed (${r.status})`);
+      const data = (await r.json()) as { insights: Insight[] };
+      if (flags.json) process.stdout.write(JSON.stringify(data.insights, null, 2) + "\n");
+      else printInsightsHuman(data.insights);
+      return;
+    }
+
     case "status": {
       const state = readState();
       if (!state || !(await ping(state.port))) {
@@ -436,9 +484,11 @@ async function main(): Promise<void> {
                    --origin <url> hosted origin (default marigold.page,
                                   or set MARIGOLD_ORIGIN)
   comments <file>  list comments   [--json]
-  context <file>   digest for catching up on a draft: open comments, recent
-                   changes, and correction pairs (resolved comment → the change
-                   that addressed it)   [--json]
+  context <file>   digest for catching up on a draft: durable insights (first),
+                   open comments, recent changes, and per-thread episodes
+                   (the chain + every attempt + where it landed)   [--json]
+  insights         list this machine's durable learnings — status, staleness,
+                   evidence counts (owner-level, across all drafts)   [--json]
   note <file> "…"  record the intent (the "why") for the next save — attached
                    to the change entry the next edit produces
   reply <file> <id> <text…>   reply to a comment (badged AI)

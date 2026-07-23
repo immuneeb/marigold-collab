@@ -11,6 +11,7 @@ import {
   applyReviewerResolve,
   applyStatusChange,
   buildContext,
+  buildEpisodes,
   buildHistory,
   decodeBaseline,
   docIdFor,
@@ -215,67 +216,79 @@ describe("history + context digest", () => {
     expect(hist[0]!.diffStats.changed).toBeGreaterThan(0);
   });
 
-  it("buildContext orders confirmed corrections first, labels proposals, and lists rejected fixes", () => {
+  it("buildContext yields one episode per thread with the full chain and terminal state", () => {
     const dir = mkdtempSync(join(tmpdir(), "mgl-"));
     const file = join(dir, "cx.html");
     writeFileSync(file, "<p>x</p>");
     const sc = loadSidecar(file);
 
-    // A confirmed correction (reviewer-confirmed at v2)…
     const confirmed = comment({ textQuote: { exact: "confirmed one" } }, "resolved");
     confirmed.id = "c1";
     confirmed.resolution = "confirmed";
     confirmed.resolvedAtVersion = 2;
-    // …an agent proposal still awaiting the reviewer (proposed at v3)…
     const proposed = comment({ textQuote: { exact: "proposed one" } }, "resolved");
     proposed.id = "c2";
     proposed.resolution = "proposed";
     proposed.resolvedAtVersion = 3;
-    // …a legacy resolved comment (no `resolution`) counts as confirmed/final…
     const legacy = comment({ textQuote: { exact: "legacy one" } }, "resolved");
     legacy.id = "c3";
     legacy.resolvedAtVersion = 1;
-    // …and a reopened comment carrying a rejected-fix signal.
-    const reopened = comment({ textQuote: { exact: "reopened one" } }, "open");
-    reopened.id = "c4";
-    reopened.rejectedFixes = [{ version: 4, at: new Date().toISOString(), note: "still wrong" }];
-    sc.comments.push(confirmed, proposed, legacy, reopened);
+    const openC = comment({ textQuote: { exact: "still open" } }, "open");
+    openC.id = "c4";
+    sc.comments.push(confirmed, proposed, legacy, openC);
     pushChange(sc, change(2, "AI", "the fix"));
 
     const ctx = buildContext(sc);
-    // Proposal must never sort ahead of a confirmed/legacy correction.
-    expect(ctx.corrections.map((c) => c.confirmed)).toEqual([true, true, false]);
-    const proposedView = ctx.corrections.find((c) => c.comment.id === "c2")!;
-    expect(proposedView.confirmed).toBe(false);
-    expect(ctx.corrections.find((c) => c.comment.id === "c3")!.confirmed).toBe(true); // legacy → confirmed
-    // The reopened comment is both an open comment AND a rejected-fix signal.
-    expect(ctx.rejectedFixes).toHaveLength(1);
-    expect(ctx.rejectedFixes[0]!.comment.id).toBe("c4");
-    expect(ctx.rejectedFixes[0]!.rejected[0]!.version).toBe(4);
-    expect(ctx.rejectedFixes[0]!.rejected[0]!.note).toBe("still wrong");
+    // One episode per thread; open comments remain listed separately.
+    expect(ctx.episodes.map((e) => e.threadId).sort()).toEqual(["c1", "c2", "c3", "c4"]);
+    expect(ctx.openComments.map((c) => c.id)).toEqual(["c4"]);
+    const byId = Object.fromEntries(ctx.episodes.map((e) => [e.threadId, e]));
+    expect(byId.c1!.terminalState).toBe("confirmed");
+    expect(byId.c2!.terminalState).toBe("proposed");
+    expect(byId.c3!.terminalState).toBe("confirmed"); // legacy resolved → confirmed
+    expect(byId.c4!.terminalState).toBe("open");
+    // The standing resolve stamp is an attempt joined to the change at/after it.
+    expect(byId.c1!.attempts).toHaveLength(1);
+    expect(byId.c1!.attempts[0]!.kind).toBe("resolved");
+    expect(byId.c1!.attempts[0]!.change!.version).toBe(2);
+    expect(byId.c1!.attempts[0]!.change!.intent).toBe("the fix");
   });
 
-  it("buildContext pairs a resolved comment with the change at/after its version", () => {
+  it("an episode tells the full propose→reopen→re-resolve→confirm chain", () => {
     const dir = mkdtempSync(join(tmpdir(), "mgl-"));
-    const file = join(dir, "c.html");
+    const file = join(dir, "chain.html");
     writeFileSync(file, "<p>x</p>");
     const sc = loadSidecar(file);
-    const openC = comment({ textQuote: { exact: "still open" } }, "open");
-    openC.id = "c1";
-    const resolvedC = comment({ textQuote: { exact: "was fixed" } }, "resolved");
-    resolvedC.id = "c2";
-    resolvedC.resolvedAtVersion = 3;
-    sc.comments.push(openC, resolvedC);
-    pushChange(sc, change(2, "AI"));
-    pushChange(sc, change(3, "AI", "the fix"));
+    // Simulate the lifecycle via the transition helpers + interleaved changes.
+    const c = comment({ textQuote: { exact: "the line" } }, "open");
+    c.id = "c1";
+    sc.comments.push(c);
+    pushChange(sc, change(2, "AI", "first attempt"));
+    applyAgentResolve(c, 2); // propose at v2
+    applyReviewerReopen(c, "missed the point"); // reviewer rejects → rejectedFix v2
+    pushChange(sc, change(3, "AI", "second attempt"));
+    applyAgentResolve(c, 3); // propose again at v3
+    applyReviewerResolve(c, 3); // reviewer confirms
 
-    const ctx = buildContext(sc);
-    expect(ctx.openComments.map((c) => c.id)).toEqual(["c1"]);
-    expect(ctx.openComments[0]!.anchoredText).toBe("still open");
-    expect(ctx.corrections).toHaveLength(1);
-    expect(ctx.corrections[0]!.comment.id).toBe("c2");
-    expect(ctx.corrections[0]!.change!.version).toBe(3);
-    expect(ctx.corrections[0]!.change!.intent).toBe("the fix");
+    const ep = buildEpisodes(sc)[0]!;
+    expect(ep.terminalState).toBe("confirmed");
+    expect(ep.reopenCount).toBe(1);
+    // Attempts: the rejected v2 fix (chronologically first) then the standing v3.
+    expect(ep.attempts.map((a) => [a.kind, a.version])).toEqual([
+      ["rejected", 2],
+      ["resolved", 3],
+    ]);
+    expect(ep.attempts[0]!.note).toBe("missed the point");
+    expect(ep.attempts[0]!.change!.intent).toBe("first attempt");
+    expect(ep.attempts[1]!.change!.intent).toBe("second attempt");
+  });
+
+  it("buildContext exposes no synthesized insights (the daemon layers those in)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "mgl-"));
+    const file = join(dir, "ins.html");
+    writeFileSync(file, "<p>x</p>");
+    const sc = loadSidecar(file);
+    expect(buildContext(sc).insights).toEqual([]);
   });
 });
 

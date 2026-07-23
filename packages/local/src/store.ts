@@ -4,6 +4,7 @@ import { basename } from "node:path";
 import { gunzipSync, gzipSync } from "node:zlib";
 import { type DiffChange, type DiffEntry, type DiffSummary } from "@marigold/core/diff";
 import { type CommentAnchor, resolveAnchor } from "@marigold/core/instrument";
+import { type InsightSummary } from "./insights";
 
 export interface LocalComment {
   id: string;
@@ -370,28 +371,50 @@ export interface OpenCommentView {
   anchoredText: string | null;
 }
 
-/** A resolved comment joined to the change that (likely) addressed it.
- * `confirmed` distinguishes a reviewer-confirmed (or legacy) resolution from an
- * agent's still-unconfirmed proposal (MUN-127). */
-export interface CorrectionView {
-  comment: { id: string; body: string; anchoredText: string | null };
-  resolvedAtVersion: number;
-  confirmed: boolean;
+/** One comment in an episode's thread (the root or a reply). */
+export interface EpisodeComment {
+  id: string;
+  author: string;
+  body: string;
+  anchoredText: string | null;
+  byAssistant: boolean;
+}
+
+/** One attempt at addressing the thread: either the standing resolve stamp or a
+ * fix the reviewer later reopened. Each carries the change at/after its version
+ * (before/after samples included) so the reader can see what was actually done.
+ * Interpret the FULL chain — a reopen may be a follow-up refinement, not a
+ * rejection; only the whole episode says which. */
+export interface EpisodeAttempt {
+  kind: "resolved" | "rejected";
+  version: number;
+  at?: string;
+  note?: string;
   change: ChangeView | null;
 }
 
-/** A comment the reviewer reopened at least once — a negative signal: the
- * listed versions' fixes did NOT address it (MUN-127). */
-export interface RejectedFixView {
-  comment: { id: string; body: string; anchoredText: string | null };
-  rejected: RejectedFix[];
+/** A review episode: one comment thread with its full chain, every attempt at
+ * addressing it, and where it landed. Replaces the older correction/rejected-fix
+ * split (MUN-135) — the raw RejectedFix storage on a comment is unchanged; only
+ * this served framing is new. The unit an agent distills an insight from. */
+export interface Episode {
+  threadId: string;
+  anchoredText: string | null;
+  kind: "overall" | null;
+  status: string;
+  terminalState: "confirmed" | "proposed" | "open";
+  reopenCount: number;
+  comments: EpisodeComment[];
+  attempts: EpisodeAttempt[];
 }
 
 export interface ContextDigest {
+  /** Owner-level insights (machine-level), served first. Empty from the pure
+   * `buildContext`; the daemon layers them in (dirty-first, capped). */
+  insights: InsightSummary[];
   openComments: OpenCommentView[];
   recentChanges: ChangeView[];
-  corrections: CorrectionView[];
-  rejectedFixes: RejectedFixView[];
+  episodes: Episode[];
 }
 
 function anchoredTextOf(c: LocalComment): string | null {
@@ -420,8 +443,71 @@ export function buildHistory(sc: Sidecar, limit = 50): ChangeView[] {
     .map(summarizeChange);
 }
 
+/** The earliest recorded change at or after `version` — the edit that most
+ * likely carried out the attempt stamped at that version. */
+function changeAtOrAfter(sc: Sidecar, version: number): ChangeView | null {
+  const match = sc.changes.filter((ch) => ch.version >= version).sort((a, b) => a.version - b.version)[0];
+  return match ? summarizeChange(match) : null;
+}
+
+/** The thread-root comment id a given comment belongs to (itself if a root). */
+export function rootIdOf(sc: Sidecar, commentId: string): string | null {
+  const c = sc.comments.find((x) => x.id === commentId);
+  if (!c) return null;
+  return c.parentId ?? c.id;
+}
+
+/** Build one episode per comment thread — the full chain, every attempt, and
+ * where it landed. Ordered learning-richest first (most reopens, then most
+ * attempts) so a capped read keeps the episodes worth distilling. */
+export function buildEpisodes(sc: Sidecar): Episode[] {
+  const roots = sc.comments.filter((c) => !c.parentId);
+  return roots
+    .map((root): Episode => {
+      const chain = [root, ...sc.comments.filter((c) => c.parentId === root.id)];
+      const comments: EpisodeComment[] = chain.map((c) => ({
+        id: c.id,
+        author: c.author,
+        body: c.body,
+        anchoredText: anchoredTextOf(c),
+        byAssistant: c.viaAssistant,
+      }));
+      // Attempts in chronological order: each reopened fix happened before the
+      // current standing resolve stamp (a reopen clears the stamp; a re-resolve
+      // sets a fresh one), so rejected entries first, the standing stamp last.
+      const attempts: EpisodeAttempt[] = [];
+      for (const rf of root.rejectedFixes ?? []) {
+        attempts.push({
+          kind: "rejected",
+          version: rf.version,
+          at: rf.at,
+          ...(rf.note ? { note: rf.note } : {}),
+          change: changeAtOrAfter(sc, rf.version),
+        });
+      }
+      if (typeof root.resolvedAtVersion === "number") {
+        attempts.push({ kind: "resolved", version: root.resolvedAtVersion, change: changeAtOrAfter(sc, root.resolvedAtVersion) });
+      }
+      const terminalState: Episode["terminalState"] =
+        root.status === "resolved" ? (root.resolution === "proposed" ? "proposed" : "confirmed") : "open";
+      return {
+        threadId: root.id,
+        anchoredText: anchoredTextOf(root),
+        kind: root.kind ?? null,
+        status: root.status,
+        terminalState,
+        reopenCount: (root.rejectedFixes ?? []).length,
+        comments,
+        attempts,
+      };
+    })
+    .sort((a, b) => b.reopenCount - a.reopenCount || b.attempts.length - a.attempts.length);
+}
+
 /** The digest an agent reads to catch up on a draft: what's still open, what
- * recently changed, and which resolved comments map to which correction. */
+ * recently changed, and one episode per thread (chain + attempts + outcome).
+ * Pure over the sidecar — `insights` is empty here; the daemon layers in the
+ * machine-level insights (and filters episodes to the unsynthesized ones). */
 export function buildContext(sc: Sidecar): ContextDigest {
   const openComments = sc.comments
     .filter((c) => !c.parentId && c.status !== "resolved")
@@ -435,34 +521,7 @@ export function buildContext(sc: Sidecar): ContextDigest {
     }));
 
   const recentChanges = buildHistory(sc, CONTEXT_CHANGES);
+  const episodes = buildEpisodes(sc);
 
-  // A correction is the earliest change at or after the version a comment was
-  // resolved at — the edit that most likely addressed the note. Confirmed
-  // corrections come first; an agent's unconfirmed proposal is labeled (a
-  // legacy resolved comment, with no `resolution`, counts as confirmed/final).
-  const corrections: CorrectionView[] = sc.comments
-    .filter((c) => !c.parentId && c.status === "resolved" && typeof c.resolvedAtVersion === "number")
-    .map((c) => {
-      const at = c.resolvedAtVersion!;
-      const match = sc.changes
-        .filter((ch) => ch.version >= at)
-        .sort((a, b) => a.version - b.version)[0];
-      return {
-        comment: { id: c.id, body: c.body, anchoredText: anchoredTextOf(c) },
-        resolvedAtVersion: at,
-        confirmed: c.resolution !== "proposed",
-        change: match ? summarizeChange(match) : null,
-      };
-    })
-    .sort((a, b) => Number(b.confirmed) - Number(a.confirmed));
-
-  // Negative signals: comments the reviewer reopened after a proposed fix.
-  const rejectedFixes: RejectedFixView[] = sc.comments
-    .filter((c) => !c.parentId && !!c.rejectedFixes?.length)
-    .map((c) => ({
-      comment: { id: c.id, body: c.body, anchoredText: anchoredTextOf(c) },
-      rejected: c.rejectedFixes!,
-    }));
-
-  return { openComments, recentChanges, corrections, rejectedFixes };
+  return { insights: [], openComments, recentChanges, episodes };
 }

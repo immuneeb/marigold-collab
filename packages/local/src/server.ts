@@ -9,6 +9,7 @@ import { applyInlineEdits, instrumentHtml, type CommentAnchor } from "@marigold/
 import {
   applyStatusChange,
   buildContext,
+  buildEpisodes,
   buildHistory,
   decodeBaseline,
   encodeBaseline,
@@ -17,15 +18,27 @@ import {
   prepareHtml,
   pushChange,
   reanchorComments,
+  rootIdOf,
   saveSidecar,
   sha256Hex,
   trimSummary,
   WRAP_MAIN_CLASS,
+  type ContextDigest,
+  type Episode,
   type LocalComment,
   type ReviewRound,
   type StatusActor,
   type Sidecar,
 } from "./store";
+import {
+  applySaveInsight,
+  loadInsights,
+  markDirtyForThread,
+  saveInsights,
+  summarizeInsight,
+  type InsightEvidence,
+  type SaveInsightRequest,
+} from "./insights";
 import { indexHtml, shellHtml } from "./shell";
 
 interface Waiter {
@@ -76,10 +89,18 @@ export interface ReviewPayload {
     replies: Array<{ id: string; author: string; body: string; byAi: boolean }>;
   }>;
   counts: { open: number; resolved: number; orphaned: number };
+  /** Owner-level insights citing this draft that went evidence-dirty — the
+   * round's activity may have outdated them; the agent should re-check them
+   * (MUN-137). Present (possibly empty) on every payload. */
+  affectedInsightIds: string[];
   hint: string;
 }
 
 const FILE_RE = /\.(html?|svg)$/i;
+
+/** Context digest caps: insights served first, then unsynthesized episodes. */
+const CONTEXT_INSIGHTS = 15;
+const CONTEXT_EPISODES = 10;
 
 // docId → file path, persisted so a restarted daemon can lazily re-open docs
 // that still-open tabs keep fetching (docIds are path hashes — not reversible).
@@ -488,8 +509,123 @@ export class LocalServer {
         resolved: rootsOf((s) => s === "resolved").length,
         orphaned: rootsOf((s) => s === "orphaned").length,
       },
+      affectedInsightIds: this.affectedInsightIds(session),
       hint: `Revise ${session.path} (the page live-reloads on save). For each comment: make the edit, then \`marigold-draft reply ${basename(session.path)} <id> "<what changed>"\` and \`marigold-draft resolve ${basename(session.path)} <id>\`. Then run \`marigold-draft open ${basename(session.path)} --json --no-browser\` to wait for the next round.`,
     };
+  }
+
+  /** Ids of evidence-dirty insights citing this draft — surfaced on the review
+   * payload so the agent knows which learnings this round may have outdated. */
+  private affectedInsightIds(session: DocSession): string[] {
+    return loadInsights()
+      .filter((i) => i.evidenceDirty && i.evidence.some((e) => e.docId === session.docId))
+      .map((i) => i.id);
+  }
+
+  /** Flag insights citing this thread as evidence-dirty after REVIEWER activity
+   * (reopen/reply/resolve), so a later synthesis re-checks them. Agent-actor
+   * mutations don't call this. Returns the citing ids. */
+  private markInsightsDirty(session: DocSession, rootId: string): string[] {
+    const threadIds = [rootId, ...session.sidecar.comments.filter((c) => c.parentId === rootId).map((c) => c.id)];
+    const list = loadInsights();
+    const { citing, changed } = markDirtyForThread(list, session.docId, threadIds);
+    if (changed) saveInsights(list);
+    return citing;
+  }
+
+  /** The sidecar behind a docId — from an open session, else lazily from the
+   * registry — for evidence checks and get_insight episode assembly. */
+  private sidecarForDoc(docId: string): Sidecar | null {
+    return this.resolveSession(docId)?.sidecar ?? null;
+  }
+
+  /** True if {docId, commentId} names a real comment in that draft. */
+  private evidenceExists(ev: InsightEvidence): boolean {
+    return this.sidecarForDoc(ev.docId)?.comments.some((c) => c.id === ev.commentId) ?? false;
+  }
+
+  /** POST /api/insights — create/reinforce/refine/contradict. Evidence must
+   * name real comments; a create against a similar active insight is a forced
+   * choice (200 with candidates, not an error). */
+  private async saveInsightRoute(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    const body = await readBody(req);
+    const rawEvidence = Array.isArray(body.evidence) ? (body.evidence as InsightEvidence[]) : [];
+    const evidence: InsightEvidence[] = rawEvidence
+      .filter((e) => e && typeof e.docId === "string" && typeof e.commentId === "string")
+      .map((e) => ({ docId: e.docId, commentId: e.commentId, ...(e.relation ? { relation: e.relation } : {}) })) as InsightEvidence[];
+    if (!evidence.length) {
+      json(res, 400, { error: "at least one evidence {docId, commentId} pair is required" });
+      return;
+    }
+    const missing = evidence.filter((e) => !this.evidenceExists(e));
+    if (missing.length) {
+      json(res, 400, { error: "evidence does not name a real comment", missing });
+      return;
+    }
+    const request: SaveInsightRequest = {
+      evidence,
+      ...(typeof body.statement === "string" ? { statement: body.statement } : {}),
+      // `updates` is the cloud name; `targetId` is a legacy alias.
+      ...(typeof body.updates === "string" ? { updates: body.updates } : {}),
+      ...(typeof body.targetId === "string" ? { targetId: body.targetId } : {}),
+      ...(typeof body.relation === "string" ? { relation: body.relation as SaveInsightRequest["relation"] } : {}),
+      ...(Array.isArray(body.distinctFrom) ? { distinctFrom: (body.distinctFrom as unknown[]).filter((x): x is string => typeof x === "string") } : {}),
+      ...(typeof body.createdByLabel === "string" ? { createdByLabel: body.createdByLabel } : {}),
+    };
+    const list = loadInsights();
+    const result = applySaveInsight(list, request);
+    // Cloud-shaped response contract (align exactly with the hosted save_insight
+    // surface so an agent moving between the two never breaks).
+    if (!result.ok) {
+      if (result.candidates) {
+        // Forced choice — expected flow, not a client error.
+        json(res, 200, {
+          saved: false,
+          needsDistinction: true,
+          candidates: result.candidates.map((c) => ({ id: c.id, statement: c.statement })),
+          hint: result.error,
+        });
+        return;
+      }
+      json(res, 400, { saved: false, error: result.error });
+      return;
+    }
+    saveInsights(list);
+    const i = result.insight!;
+    json(res, 200, {
+      saved: true,
+      insight: { id: i.id, statement: i.statement, status: i.status, relation: result.relation, evidenceCount: i.evidence.length, updatedAt: i.updatedAt },
+      ...(result.retiredId ? { supersededId: result.retiredId } : {}),
+    });
+  }
+
+  /** The episode a cited comment belongs to (its thread), or null. */
+  private episodeForEvidence(ev: InsightEvidence): (Episode & { docId: string }) | null {
+    const sc = this.sidecarForDoc(ev.docId);
+    if (!sc) return null;
+    const rid = rootIdOf(sc, ev.commentId);
+    if (!rid) return null;
+    const ep = buildEpisodes(sc).find((e) => e.threadId === rid);
+    return ep ? { ...ep, docId: ev.docId } : null;
+  }
+
+  /** Compose the served context: machine-level insights first (dirty-first,
+   * capped), then this draft's UNSYNTHESIZED episodes (threads no insight
+   * cites) — the ones still awaiting distillation. */
+  private composeContext(session: DocSession): ContextDigest {
+    const base = buildContext(session.sidecar);
+    const insights = loadInsights();
+    const summaries = insights
+      .filter((i) => i.status !== "retired")
+      .sort((a, b) => Number(b.evidenceDirty) - Number(a.evidenceDirty) || (a.updatedAt < b.updatedAt ? 1 : -1))
+      .slice(0, CONTEXT_INSIGHTS)
+      .map(summarizeInsight);
+    const synthesized = new Set<string>();
+    for (const i of insights) for (const e of i.evidence) if (e.docId === session.docId) synthesized.add(e.commentId);
+    const episodes = base.episodes
+      .filter((ep) => !ep.comments.some((c) => synthesized.has(c.id)))
+      .slice(0, CONTEXT_EPISODES);
+    return { insights: summaries, openComments: base.openComments, recentChanges: base.recentChanges, episodes };
   }
 
   // ── routing ──
@@ -623,6 +759,31 @@ export class LocalServer {
       return;
     }
 
+    // ── owner-level insights (machine-level, not per-doc) ──
+    if (p === "/api/insights" && method === "GET") {
+      json(res, 200, { insights: loadInsights() });
+      return;
+    }
+    if (p === "/api/insights" && method === "POST") {
+      await this.saveInsightRoute(req, res);
+      return;
+    }
+    const im = p.match(/^\/api\/insights\/([\w-]+)$/);
+    if (im && method === "GET") {
+      const insight = loadInsights().find((i) => i.id === im[1]);
+      if (!insight) {
+        json(res, 404, { error: "insight not found" });
+        return;
+      }
+      // Assemble each cited comment's episode (skipping evidence whose doc/
+      // comment no longer resolves), reusing the Part A episode builder.
+      const episodes = insight.evidence
+        .map((e) => this.episodeForEvidence(e))
+        .filter((e): e is Episode & { docId: string } => e !== null);
+      json(res, 200, { insight, episodes });
+      return;
+    }
+
     // /api/docs/:id/...
     const am = p.match(/^\/api\/docs\/([\w-]+)(\/.*)?$/);
     if (!am) {
@@ -704,6 +865,9 @@ export class LocalServer {
           author: typeof body.author === "string" ? body.author : undefined,
           viaAssistant: !!body.viaAssistant,
         });
+        // Only a REVIEWER reply (shell, not an agent's viaAssistant reply) is
+        // new evidence that outdates a citing insight.
+        if (!body.viaAssistant) this.markInsightsDirty(session, rootId);
         json(res, 200, { id: c.id });
         return;
       }
@@ -728,6 +892,9 @@ export class LocalServer {
           if (changed) {
             saveSidecar(session.path, session.sidecar);
             this.broadcast(session, "comments", {});
+            // Only REVIEWER activity outdates a citing insight — an agent's own
+            // resolve/reopen (its proposal) isn't new evidence to re-check.
+            if (actor === "reviewer") this.markInsightsDirty(session, target.parentId ?? target.id);
           }
           json(res, 200, { ok: true, changed, status: target.status, resolution: target.resolution ?? null });
           return;
@@ -756,7 +923,7 @@ export class LocalServer {
     }
 
     if (sub === "/context" && method === "GET") {
-      json(res, 200, buildContext(session.sidecar));
+      json(res, 200, this.composeContext(session));
       return;
     }
 

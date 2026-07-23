@@ -436,7 +436,7 @@ describe("local review loop", () => {
     expect(after.changes[0]!.intent).toBe("for the AI save");
   });
 
-  it("resolve stamps resolvedAtVersion and context pairs it to a later change", async () => {
+  it("resolve stamps the version and the thread's episode joins it to a later change", async () => {
     const f = join(dir, "ctx-srv.html");
     writeFileSync(f, "<h1>Doc</h1><p>needs a fix in this line</p>");
     const d = (await (await post("/api/open", { path: f })).json()) as { docId: string };
@@ -449,7 +449,7 @@ describe("local review loop", () => {
       })
     ).json()) as { id: string };
 
-    // Resolve — stamps the current version.
+    // Agent proposes resolved — stamps the current version.
     const pr = await api(`/api/docs/${d.docId}/comments/${c.id}`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
@@ -457,17 +457,24 @@ describe("local review loop", () => {
     });
     expect(pr.ok).toBe(true);
 
-    // A subsequent edit is the correction.
+    // A subsequent edit is the attempt's change.
     writeFileSync(f, "<h1>Doc</h1><p>this line is now fixed and clear</p>");
-    let ctx = { openComments: [] as unknown[], recentChanges: [] as unknown[], corrections: [] as { comment: { id: string }; change: { version: number } | null }[] };
-    for (let i = 0; i < 50 && ctx.corrections.length === 0; i++) {
+    type Ctx = {
+      openComments: unknown[];
+      episodes: { threadId: string; terminalState: string; attempts: { change: { version: number } | null }[] }[];
+    };
+    let ep: Ctx["episodes"][number] | undefined;
+    let ctx: Ctx = { openComments: [], episodes: [] };
+    for (let i = 0; i < 50; i++) {
       await new Promise((r) => setTimeout(r, 60));
-      ctx = (await (await api(`/api/docs/${d.docId}/context`)).json()) as typeof ctx;
+      ctx = (await (await api(`/api/docs/${d.docId}/context`)).json()) as Ctx;
+      ep = ctx.episodes.find((e) => e.threadId === c.id);
+      if (ep && ep.attempts.some((a) => a.change)) break;
     }
-    expect(ctx.corrections).toHaveLength(1);
-    expect(ctx.corrections[0]!.comment.id).toBe(c.id);
-    expect(ctx.corrections[0]!.change).not.toBeNull();
-    // The resolved comment is not in the open set.
+    expect(ep).toBeTruthy();
+    expect(ep!.terminalState).toBe("proposed"); // agent resolve → proposed
+    expect(ep!.attempts.some((a) => a.change)).toBe(true);
+    // The proposed (resolved) comment is not in the open set.
     expect(ctx.openComments).toHaveLength(0);
   });
 
@@ -554,5 +561,155 @@ describe("local review loop", () => {
     expect(src).toContain("Section (edited)");
     expect(src).not.toContain("<html"); // still a fragment
     expect(src).not.toContain("data-marigold-id"); // written back clean
+  });
+
+  it("save_insight validates evidence, forces a choice on near-duplicates, and get_insight expands episodes (MUN-137)", async () => {
+    const f = join(dir, "ins-srv.html");
+    writeFileSync(f, "<h1>Doc</h1><p>the tone is too formal here</p>");
+    const d = (await (await post("/api/open", { path: f })).json()) as { docId: string };
+    const frame = await (await api(`/d/${d.docId}/frame`)).text();
+    const pid = /<p data-marigold-id="(mg-[0-9a-f]{10})"/.exec(frame)![1]!;
+    const c = (await (
+      await post(`/api/docs/${d.docId}/comments`, {
+        body: "make it warmer",
+        anchor: { marigoldId: pid, textQuote: { exact: "too formal" } },
+      })
+    ).json()) as { id: string };
+
+    // Evidence must name a real comment.
+    const bad = await post("/api/insights", { statement: "warm tone wins", evidence: [{ docId: d.docId, commentId: "c999" }] });
+    expect(bad.status).toBe(400);
+
+    // Over-long statements are rejected (140-char cloud cap).
+    const long = await post("/api/insights", { statement: "x".repeat(141), evidence: [{ docId: d.docId, commentId: c.id }] });
+    expect(long.status).toBe(400);
+    expect(((await long.json()) as { saved: boolean }).saved).toBe(false);
+
+    // Create — cloud success shape: {saved, insight:{id,…,relation,evidenceCount}}.
+    const created = (await (
+      await post("/api/insights", { statement: "readers prefer a warm tone", evidence: [{ docId: d.docId, commentId: c.id }] })
+    ).json()) as { saved: boolean; insight: { id: string; relation: string; evidenceCount: number; status: string } };
+    expect(created.saved).toBe(true);
+    expect(created.insight.relation).toBe("new");
+    expect(created.insight.evidenceCount).toBe(1);
+
+    // A near-duplicate is a forced choice — cloud shape {saved:false, needsDistinction, candidates:[{id,statement}]}.
+    const dupRes = await post("/api/insights", {
+      statement: "a warm tone is what readers prefer",
+      evidence: [{ docId: d.docId, commentId: c.id }],
+    });
+    expect(dupRes.status).toBe(200);
+    const dup = (await dupRes.json()) as { saved: boolean; needsDistinction: boolean; candidates: { id: string; statement: string }[] };
+    expect(dup.saved).toBe(false);
+    expect(dup.needsDistinction).toBe(true);
+    expect(dup.candidates).toHaveLength(1);
+    expect(dup.candidates[0]!.id).toBe(created.insight.id);
+
+    // Legacy input (targetId + singular relation) is still accepted → reinforces.
+    const reinf = (await (
+      await post("/api/insights", { targetId: created.insight.id, relation: "reinforce", evidence: [{ docId: d.docId, commentId: c.id }] })
+    ).json()) as { saved: boolean; insight: { relation: string; evidenceCount: number } };
+    expect(reinf.saved).toBe(true);
+    expect(reinf.insight.relation).toBe("reinforces");
+    expect(reinf.insight.evidenceCount).toBe(1); // same evidence deduped, not doubled
+
+    // get_insight expands each evidence link into its episode.
+    const got = (await (await api(`/api/insights/${created.insight.id}`)).json()) as {
+      insight: { id: string };
+      episodes: { threadId: string; docId: string }[];
+    };
+    expect(got.episodes).toHaveLength(1);
+    expect(got.episodes[0]!.threadId).toBe(c.id);
+    expect(got.episodes[0]!.docId).toBe(d.docId);
+  });
+
+  it("agent-source resolve/reply does NOT dirty a citing insight; reviewer does (MUN-137)", async () => {
+    const f = join(dir, "actor-srv.html");
+    writeFileSync(f, "<h1>Doc</h1><p>tighten this sentence please</p>");
+    const d = (await (await post("/api/open", { path: f })).json()) as { docId: string };
+    const frame = await (await api(`/d/${d.docId}/frame`)).text();
+    const pid = /<p data-marigold-id="(mg-[0-9a-f]{10})"/.exec(frame)![1]!;
+    const c = (await (
+      await post(`/api/docs/${d.docId}/comments`, { body: "tighten", anchor: { marigoldId: pid, textQuote: { exact: "tighten this" } } })
+    ).json()) as { id: string };
+    const ins = (await (
+      await post("/api/insights", { statement: "sentences should be tight", evidence: [{ docId: d.docId, commentId: c.id }] })
+    ).json()) as { insight: { id: string } };
+
+    const dirtyNow = async () => {
+      const list = (await (await api("/api/insights")).json()) as { insights: { id: string; evidenceDirty: boolean }[] };
+      return list.insights.find((i) => i.id === ins.insight.id)!.evidenceDirty;
+    };
+    const patch = (body: unknown) =>
+      api(`/api/docs/${d.docId}/comments/${c.id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+
+    // Agent resolve (default source) + agent reply (viaAssistant) — neither dirties.
+    await patch({ status: "resolved" });
+    await post(`/api/docs/${d.docId}/comments/${c.id}/replies`, { body: "did it", viaAssistant: true, author: "AI" });
+    expect(await dirtyNow()).toBe(false);
+
+    // A reviewer reply is fresh evidence — it dirties.
+    await post(`/api/docs/${d.docId}/comments/${c.id}/replies`, { body: "still loose" });
+    expect(await dirtyNow()).toBe(true);
+  });
+
+  it("a reopen marks citing insights dirty and surfaces them on the review payload (MUN-137)", async () => {
+    const f = join(dir, "stale-srv.html");
+    writeFileSync(f, "<h1>Doc</h1><p>needs a warmer intro line</p>");
+    const d = (await (await post("/api/open", { path: f })).json()) as { docId: string };
+    const frame = await (await api(`/d/${d.docId}/frame`)).text();
+    const pid = /<p data-marigold-id="(mg-[0-9a-f]{10})"/.exec(frame)![1]!;
+    const c = (await (
+      await post(`/api/docs/${d.docId}/comments`, {
+        body: "warmer",
+        anchor: { marigoldId: pid, textQuote: { exact: "warmer intro" } },
+      })
+    ).json()) as { id: string };
+    const ins = (await (
+      await post("/api/insights", { statement: "intros should be warm and short", evidence: [{ docId: d.docId, commentId: c.id }] })
+    ).json()) as { insight: { id: string } };
+
+    const patch = (body: unknown) =>
+      api(`/api/docs/${d.docId}/comments/${c.id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    await patch({ status: "resolved" }); // agent proposes
+    await patch({ status: "open", source: "reviewer" }); // reviewer reopens → thread activity
+
+    const list = (await (await api("/api/insights")).json()) as { insights: { id: string; evidenceDirty: boolean }[] };
+    expect(list.insights.find((i) => i.id === ins.insight.id)!.evidenceDirty).toBe(true);
+
+    // The dirty insight rides the delivered review payload as an affected id.
+    const waitP = api(`/api/docs/${d.docId}/wait?timeout=10`);
+    await new Promise((r) => setTimeout(r, 100));
+    await post(`/api/docs/${d.docId}/submit`, {});
+    const payload = (await (await waitP).json()) as { affectedInsightIds: string[] };
+    expect(payload.affectedInsightIds).toContain(ins.insight.id);
+  });
+
+  it("context serves insights first and drops synthesized episodes (MUN-135/137)", async () => {
+    const f = join(dir, "ctx-ep.html");
+    writeFileSync(f, "<h1>Doc</h1><p>alpha line here</p><p>beta line here</p>");
+    const d = (await (await post("/api/open", { path: f })).json()) as { docId: string };
+    const frame = await (await api(`/d/${d.docId}/frame`)).text();
+    const ids = [...frame.matchAll(/<p data-marigold-id="(mg-[0-9a-f]{10})"/g)].map((m) => m[1]!);
+    const c1 = (await (
+      await post(`/api/docs/${d.docId}/comments`, { body: "on alpha", anchor: { marigoldId: ids[0], textQuote: { exact: "alpha line" } } })
+    ).json()) as { id: string };
+    const c2 = (await (
+      await post(`/api/docs/${d.docId}/comments`, { body: "on beta", anchor: { marigoldId: ids[1], textQuote: { exact: "beta line" } } })
+    ).json()) as { id: string };
+
+    // Synthesize an insight from c1's thread only.
+    const ins = (await (
+      await post("/api/insights", { statement: "alpha needs punchier copy", evidence: [{ docId: d.docId, commentId: c1.id }] })
+    ).json()) as { insight: { id: string } };
+
+    const ctx = (await (await api(`/api/docs/${d.docId}/context`)).json()) as {
+      insights: { id: string }[];
+      episodes: { threadId: string }[];
+    };
+    expect(ctx.insights.map((i) => i.id)).toContain(ins.insight.id);
+    const epIds = ctx.episodes.map((e) => e.threadId);
+    expect(epIds).toContain(c2.id); // unsynthesized → shown
+    expect(epIds).not.toContain(c1.id); // synthesized → dropped
   });
 });

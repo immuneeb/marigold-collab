@@ -130,6 +130,17 @@ monitor.
 5. **Stop looping** when the user says they're done, or a round arrives with no
    open comments and no overall comment (that's a sign-off).
 
+6. **Distill an insight** at a round's close. \`get_context\` reads each thread
+   as an episode (its full comment chain, every attempt, and where it landed —
+   read the whole chain; a reopen may be a follow-up, not a rejection) and
+   lists your durable, cross-draft learnings (owner-level, stale ones first).
+   When an episode teaches something reusable, record it with \`save_insight\`
+   (MCP) — evidence-mandatory (cite the {docId, commentId} threads). First
+   reaffirm/refine/contradict a matching existing insight rather than creating
+   a near-duplicate; the daemon enforces this by returning \`candidates\` and
+   refusing a create until you pick one or mark it distinct. \`marigold-draft
+   insights\` lists them from the CLI.
+
 ## Graduating to hosted Marigold (when the user wants to share or keep a draft)
 
 Local drafts live on this machine only. When the user says anything like "share
@@ -241,7 +252,11 @@ When asked to "spin up marigold draft" (or for a local commentable draft):
    \`marigold-draft resolve <file> <id>\` — resolve only PROPOSES the fix; the
    reviewer confirms or reopens it in the shell. \`marigold-draft context <file>\`
    lists fixes the reviewer rejected (reopened), so re-attempt those.
-4. To share or keep a draft: \`marigold-draft share <file>\` posts it to hosted
+4. At a round's close, distill durable cross-draft learnings: \`get_context\`
+   reads each thread as an episode (chain + attempts + outcome) and lists your
+   insights; record a reusable one with \`save_insight\` (evidence-mandatory) —
+   reaffirm/refine/contradict a matching insight before creating a duplicate.
+5. To share or keep a draft: \`marigold-draft share <file>\` posts it to hosted
    Marigold and prints a share link (anyone with it can view + comment) plus a
    claim link (sign in to keep it and control access).
 Never run \`marigold-draft serve\` or \`stop\` yourself.`;
