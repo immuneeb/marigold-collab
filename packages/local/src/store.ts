@@ -369,6 +369,10 @@ export interface OpenCommentView {
   status: string;
   kind: "overall" | null;
   anchoredText: string | null;
+  /** This open thread is an "answered" Q&A thread (open, an agent reply, never
+   * reopened) — it also appears as an "answered" episode. The flag lets an agent
+   * dedupe the two views (MUN-139). */
+  answered: boolean;
 }
 
 /** One comment in an episode's thread (the root or a reply). */
@@ -402,8 +406,15 @@ export interface Episode {
   anchoredText: string | null;
   kind: "overall" | null;
   status: string;
-  terminalState: "confirmed" | "proposed" | "open";
+  /** Where the thread landed. "answered" (MUN-139) = an open thread the agent
+   * replied to but that was never resolved (a Q&A thread) — synthesizable
+   * learning like any other outcome; only applies while open (a later resolve/
+   * reopen follows the confirmed/proposed/open states). */
+  terminalState: "confirmed" | "proposed" | "open" | "answered";
   reopenCount: number;
+  /** Newest comment time in the thread (root or reply) — the recency tiebreak
+   * for episode ordering, so a freshly answered Q&A isn't buried at the cap. */
+  lastActivityAt: string;
   comments: EpisodeComment[];
   attempts: EpisodeAttempt[];
 }
@@ -457,6 +468,19 @@ export function rootIdOf(sc: Sidecar, commentId: string): string | null {
   return c.parentId ?? c.id;
 }
 
+/** True if the thread has at least one agent (viaAssistant) reply. */
+function hasAssistantReply(sc: Sidecar, rootId: string): boolean {
+  return sc.comments.some((c) => c.parentId === rootId && c.viaAssistant);
+}
+
+/** A Q&A thread that's "answered" (MUN-139): open, the agent replied, and it was
+ * never reopened. A reopen (rejectedFixes) means the reviewer rejected a fix and
+ * the thread still needs work — so a reopened thread with an earlier agent reply
+ * stays plain "open", not "answered". */
+function isAnsweredThread(sc: Sidecar, root: LocalComment): boolean {
+  return root.status === "open" && !root.rejectedFixes?.length && hasAssistantReply(sc, root.id);
+}
+
 /** Build one episode per comment thread — the full chain, every attempt, and
  * where it landed. Ordered learning-richest first (most reopens, then most
  * attempts) so a capped read keeps the episodes worth distilling. */
@@ -488,8 +512,18 @@ export function buildEpisodes(sc: Sidecar): Episode[] {
       if (typeof root.resolvedAtVersion === "number") {
         attempts.push({ kind: "resolved", version: root.resolvedAtVersion, change: changeAtOrAfter(sc, root.resolvedAtVersion) });
       }
-      const terminalState: Episode["terminalState"] =
-        root.status === "resolved" ? (root.resolution === "proposed" ? "proposed" : "confirmed") : "open";
+      // Resolved → confirmed/proposed. Otherwise an OPEN thread the agent
+      // replied to and that was never reopened is "answered" — a Q&A outcome
+      // worth synthesizing; anything else (incl. a reopened thread) stays "open".
+      let terminalState: Episode["terminalState"];
+      if (root.status === "resolved") {
+        terminalState = root.resolution === "proposed" ? "proposed" : "confirmed";
+      } else if (isAnsweredThread(sc, root)) {
+        terminalState = "answered";
+      } else {
+        terminalState = "open";
+      }
+      const lastActivityAt = chain.reduce((max, c) => (c.createdAt > max ? c.createdAt : max), root.createdAt);
       return {
         threadId: root.id,
         anchoredText: anchoredTextOf(root),
@@ -497,11 +531,19 @@ export function buildEpisodes(sc: Sidecar): Episode[] {
         status: root.status,
         terminalState,
         reopenCount: (root.rejectedFixes ?? []).length,
+        lastActivityAt,
         comments,
         attempts,
       };
     })
-    .sort((a, b) => b.reopenCount - a.reopenCount || b.attempts.length - a.attempts.length);
+    // Learning-richest first (most reopens, then most attempts), then most
+    // recent activity so a freshly answered Q&A isn't sorted behind stale threads.
+    .sort(
+      (a, b) =>
+        b.reopenCount - a.reopenCount ||
+        b.attempts.length - a.attempts.length ||
+        (a.lastActivityAt < b.lastActivityAt ? 1 : a.lastActivityAt > b.lastActivityAt ? -1 : 0),
+    );
 }
 
 /** The digest an agent reads to catch up on a draft: what's still open, what
@@ -509,6 +551,9 @@ export function buildEpisodes(sc: Sidecar): Episode[] {
  * Pure over the sidecar — `insights` is empty here; the daemon layers in the
  * machine-level insights (and filters episodes to the unsynthesized ones). */
 export function buildContext(sc: Sidecar): ContextDigest {
+  // Every open root is surfaced (guaranteed surface — the daemon's doc-listing
+  // count counts the same set). Answered Q&A threads carry an `answered` flag
+  // and ALSO appear as "answered" episodes; the flag lets agents dedupe.
   const openComments = sc.comments
     .filter((c) => !c.parentId && c.status !== "resolved")
     .map((c) => ({
@@ -518,6 +563,7 @@ export function buildContext(sc: Sidecar): ContextDigest {
       status: c.status,
       kind: c.kind ?? null,
       anchoredText: anchoredTextOf(c),
+      answered: isAnsweredThread(sc, c),
     }));
 
   const recentChanges = buildHistory(sc, CONTEXT_CHANGES);

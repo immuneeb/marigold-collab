@@ -685,6 +685,37 @@ describe("local review loop", () => {
     expect(payload.affectedInsightIds).toContain(ins.insight.id);
   });
 
+  it("an agent reply flags a thread 'answered' in BOTH openComments and episodes; the count stays aligned (MUN-139)", async () => {
+    const f = join(dir, "qa-srv.html");
+    writeFileSync(f, "<h1>Doc</h1><p>why is this marigold</p>");
+    const d = (await (await post("/api/open", { path: f })).json()) as { docId: string };
+    const frame = await (await api(`/d/${d.docId}/frame`)).text();
+    const pid = /<p data-marigold-id="(mg-[0-9a-f]{10})"/.exec(frame)![1]!;
+    const c = (await (
+      await post(`/api/docs/${d.docId}/comments`, { body: "why marigold?", anchor: { marigoldId: pid, textQuote: { exact: "why is this" } } })
+    ).json()) as { id: string };
+
+    // Before any reply: a plain open comment (answered=false).
+    let ctx = (await (await api(`/api/docs/${d.docId}/context`)).json()) as {
+      openComments: { id: string; answered: boolean }[];
+      episodes: { threadId: string; terminalState: string }[];
+    };
+    expect(ctx.openComments.find((x) => x.id === c.id)!.answered).toBe(false);
+    expect(ctx.episodes.find((e) => e.threadId === c.id)!.terminalState).toBe("open");
+
+    // Agent replies (viaAssistant) but never resolves → answered in BOTH views.
+    await post(`/api/docs/${d.docId}/comments/${c.id}/replies`, { body: "it's the brand color", viaAssistant: true, author: "AI" });
+    ctx = (await (await api(`/api/docs/${d.docId}/context`)).json()) as typeof ctx;
+    const oc = ctx.openComments.find((x) => x.id === c.id)!;
+    expect(oc.answered).toBe(true); // still surfaced, now flagged
+    expect(ctx.episodes.find((e) => e.threadId === c.id)!.terminalState).toBe("answered");
+
+    // The digest's openComments count matches the daemon doc-listing count.
+    const status = (await (await api("/api/status")).json()) as { docs: { docId: string; openComments: number }[] };
+    const listed = status.docs.find((x) => x.docId === d.docId)!.openComments;
+    expect(ctx.openComments.length).toBe(listed);
+  });
+
   it("context serves insights first and drops synthesized episodes (MUN-135/137)", async () => {
     const f = join(dir, "ctx-ep.html");
     writeFileSync(f, "<h1>Doc</h1><p>alpha line here</p><p>beta line here</p>");

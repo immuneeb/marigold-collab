@@ -283,6 +283,105 @@ describe("history + context digest", () => {
     expect(ep.attempts[1]!.change!.intent).toBe("second attempt");
   });
 
+  const aiReply = (id: string, parentId: string, createdAt = new Date().toISOString()): LocalComment => ({
+    id,
+    parentId,
+    author: "AI",
+    body: "answered",
+    anchor: null,
+    status: "open",
+    viaAssistant: true,
+    createdAt,
+  });
+
+  it("an open thread with an agent reply is 'answered' — surfaced in BOTH openComments (flagged) and episodes (MUN-139)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "mgl-"));
+    const file = join(dir, "qa.html");
+    writeFileSync(file, "<p>x</p>");
+    const sc = loadSidecar(file);
+    const q = comment({ textQuote: { exact: "why this color?" } }, "open");
+    q.id = "c1";
+    // A plain open thread with no agent reply stays "open".
+    const plain = comment({ textQuote: { exact: "still open" } }, "open");
+    plain.id = "c2";
+    sc.comments.push(q, aiReply("c1r1", "c1"), plain);
+
+    const ctx = buildContext(sc);
+    const byId = Object.fromEntries(ctx.episodes.map((e) => [e.threadId, e]));
+    expect(byId.c1!.terminalState).toBe("answered");
+    expect(byId.c2!.terminalState).toBe("open");
+    // Guaranteed surface: BOTH open threads appear; the answered one is flagged.
+    const flagById = Object.fromEntries(ctx.openComments.map((c) => [c.id, c.answered]));
+    expect(Object.keys(flagById).sort()).toEqual(["c1", "c2"]);
+    expect(flagById.c1).toBe(true);
+    expect(flagById.c2).toBe(false);
+  });
+
+  it("a reopened thread with an earlier agent reply is 'open', not 'answered' (MUN-139)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "mgl-"));
+    const file = join(dir, "reopened-qa.html");
+    writeFileSync(file, "<p>x</p>");
+    const sc = loadSidecar(file);
+    const q = comment({ textQuote: { exact: "q" } }, "open");
+    q.id = "c1";
+    sc.comments.push(q, aiReply("c1r1", "c1"));
+    // reply → resolve → reopen: the rejected fix means it still needs work.
+    applyAgentResolve(q, 2);
+    applyReviewerReopen(q, "not addressed");
+
+    expect(buildEpisodes(sc)[0]!.terminalState).toBe("open");
+    const ctx = buildContext(sc);
+    const oc = ctx.openComments.find((c) => c.id === "c1")!;
+    expect(oc).toBeTruthy(); // still surfaced
+    expect(oc.answered).toBe(false); // a reopened thread is NOT answered
+  });
+
+  it("orders a freshly answered Q&A ahead of a stale plain-open thread (recency tiebreak)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "mgl-"));
+    const file = join(dir, "order.html");
+    writeFileSync(file, "<p>x</p>");
+    const sc = loadSidecar(file);
+    // Equal learning-richness (0 reopens, 0 attempts). c1 is stale; c2 was just
+    // answered — its reply is the latest activity, so it must sort first.
+    const stale = comment({ textQuote: { exact: "stale" } }, "open");
+    stale.id = "c1";
+    stale.createdAt = "2020-01-01T00:00:00.000Z";
+    const fresh = comment({ textQuote: { exact: "fresh" } }, "open");
+    fresh.id = "c2";
+    fresh.createdAt = "2020-01-01T00:00:00.000Z";
+    sc.comments.push(stale, fresh, aiReply("c2r1", "c2", "2026-01-01T00:00:00.000Z"));
+
+    expect(buildEpisodes(sc).map((e) => e.threadId)).toEqual(["c2", "c1"]);
+  });
+
+  it("an answered thread that is later resolved follows the existing states (MUN-139)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "mgl-"));
+    const file = join(dir, "qa2.html");
+    writeFileSync(file, "<p>x</p>");
+    const sc = loadSidecar(file);
+    const q = comment({ textQuote: { exact: "q" } }, "open");
+    q.id = "c1";
+    const reply: LocalComment = {
+      id: "c1r1",
+      parentId: "c1",
+      author: "AI",
+      body: "answered",
+      anchor: null,
+      status: "open",
+      viaAssistant: true,
+      createdAt: new Date().toISOString(),
+    };
+    sc.comments.push(q, reply);
+    expect(buildEpisodes(sc)[0]!.terminalState).toBe("answered");
+
+    // Agent proposes resolved → proposed (answered no longer applies).
+    applyAgentResolve(q, 2);
+    expect(buildEpisodes(sc)[0]!.terminalState).toBe("proposed");
+    // Reviewer confirms → confirmed.
+    applyReviewerResolve(q, 2);
+    expect(buildEpisodes(sc)[0]!.terminalState).toBe("confirmed");
+  });
+
   it("buildContext exposes no synthesized insights (the daemon layers those in)", () => {
     const dir = mkdtempSync(join(tmpdir(), "mgl-"));
     const file = join(dir, "ins.html");

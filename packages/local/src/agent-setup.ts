@@ -132,8 +132,10 @@ monitor.
 
 6. **Distill an insight** at a round's close. \`get_context\` reads each thread
    as an episode (its full comment chain, every attempt, and where it landed —
-   read the whole chain; a reopen may be a follow-up, not a rejection) and
-   lists your durable, cross-draft learnings (owner-level, stale ones first).
+   read the whole chain; a reopen may be a follow-up, not a rejection). Episodes
+   include "answered" Q&A threads — an open comment you replied to but that was
+   never resolved is synthesizable learning too. It also lists your durable,
+   cross-draft learnings (owner-level, stale ones first).
    When an episode teaches something reusable, record it with \`save_insight\`
    (MCP) — evidence-mandatory (cite the {docId, commentId} threads). First
    reaffirm/refine/contradict a matching existing insight rather than creating

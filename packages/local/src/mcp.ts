@@ -48,8 +48,10 @@ get_feedback again for the next round. resolve_comment only PROPOSES a
 resolution — the reviewer confirms it (or reopens if the fix missed) in the
 shell. note_intent records the "why" for the next save; get_history and
 get_context replay what changed and lay out each thread as an EPISODE — its
-full comment chain, every attempt, and where it landed. Read the whole chain
-before judging: a reopen may be a follow-up refinement, not a rejection. At a
+full comment chain, every attempt, and where it landed (confirmed, proposed,
+open, or "answered" — a Q&A thread you replied to but that was never resolved).
+Read the whole chain before judging: a reopen may be a follow-up refinement,
+not a rejection; an answered thread is synthesizable learning too. At a
 round's close, distill durable cross-draft learnings with save_insight — but
 first reaffirm/refine/contradict a matching existing insight rather than
 spawning a near-duplicate; get_context lists current insights (stale ones
@@ -333,7 +335,7 @@ export async function runMcp(): Promise<void> {
     {
       title: "Get context",
       description:
-        "get the draft's catch-up digest: durable insights FIRST (owner-level learnings across all drafts, stale ones first — an insight goes stale when a cited thread gets fresh REVIEWER activity; reaffirm/refine before creating a near-duplicate), then the open comments, the recent changes, and this draft's unsynthesized episodes (each thread's full comment chain, every attempt, and where it landed — read the whole chain, a reopen may be a follow-up, not a rejection).",
+        "get the draft's catch-up digest: durable insights FIRST (owner-level learnings across all drafts, stale ones first — an insight goes stale when a cited thread gets fresh REVIEWER activity; reaffirm/refine before creating a near-duplicate), then the open comments, the recent changes, and this draft's unsynthesized episodes (each thread's full comment chain, every attempt, and where it landed — read the whole chain, a reopen may be a follow-up, not a rejection). An episode's terminalState is confirmed | proposed | open | \"answered\" (an open Q&A thread you replied to that was never resolved or reopened — synthesizable like any other). Answered threads appear BOTH as episodes and as open comments carrying `answered:true` — dedupe the two views by that flag.",
       inputSchema: { path: z.string() },
     },
     async ({ path }) => {

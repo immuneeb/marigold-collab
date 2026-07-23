@@ -125,6 +125,7 @@ function printInsightSummary(i: InsightSummary, indent = "  "): void {
 function terminalLabel(t: Episode["terminalState"]): string {
   if (t === "confirmed") return ok("confirmed");
   if (t === "proposed") return warn("proposed");
+  if (t === "answered") return warn("answered — awaiting reader follow-up");
   return dim("open");
 }
 
@@ -148,7 +149,7 @@ function printContextHuman(ctx: ContextDigest): void {
   log(`\n${bold("Open comments")}`);
   if (!ctx.openComments.length) log(dim("  (none)"));
   for (const c of ctx.openComments) {
-    log(`  [${c.id}] ${c.author}${c.kind === "overall" ? " (overall feedback)" : ""}${c.anchoredText ? ` on “${c.anchoredText.slice(0, 60)}”` : ""}: ${c.body}`);
+    log(`  [${c.id}] ${c.author}${c.kind === "overall" ? " (overall feedback)" : ""}${c.anchoredText ? ` on “${c.anchoredText.slice(0, 60)}”` : ""}: ${c.body}${c.answered ? dim(" · answered") : ""}`);
   }
 
   log(`\n${bold("Recent changes")}`);
