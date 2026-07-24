@@ -641,6 +641,16 @@ export const ANCHOR_AGENT_JS = String.raw`(function () {
       else if (wasArmed && !editArmed) { endEdit(true); hideControls(); }
     }
     else if (d.type === "clearSelection") { try { window.getSelection().removeAllRanges(); } catch (err) {} lastSelKey = ""; }
+    // Coarse-pointer placement: the shell captured the tap on its side (the
+    // parent needs the gesture to focus the composer) and asks us to resolve
+    // the element under that point.
+    else if (d.type === "placeAt") {
+      commentMode = false; setCommentModeUI(false);
+      var hit = document.elementFromPoint(d.x, d.y) || document.body;
+      send({ type: "placed", anchor: anchorFor(hit, null), point: { x: d.x, y: d.y } });
+    }
+    // Scroll forwarded from the shell's capture layer while comment mode is armed.
+    else if (d.type === "scrollBy") { window.scrollBy(d.dx || 0, d.dy || 0); }
     else if (d.type === "scrollTo") { var el = elFor(d.id); if (el) el.scrollIntoView({ block: "center", behavior: "smooth" }); }
     else if (d.type === "interactions") { applyInteractions(d); }
   });
