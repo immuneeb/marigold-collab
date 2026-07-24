@@ -6,6 +6,7 @@ import { parse } from "node-html-parser";
 import { ANCHOR_AGENT_JS } from "@marigold/core/agent-src";
 import { diffInstrumented, isEmptyDiff } from "@marigold/core/diff";
 import { applyInlineEdits, instrumentHtml, type CommentAnchor } from "@marigold/core/instrument";
+import { ping } from "./telemetry";
 import {
   applyStatusChange,
   buildContext,
@@ -962,6 +963,7 @@ export class LocalServer {
     }
 
     if (sub === "/submit" && method === "POST") {
+      ping("feedback.submitted");
       const body = await readBody(req);
       const overall = typeof body.overallComment === "string" && body.overallComment.trim() ? body.overallComment.trim() : null;
       // Freeform text becomes a doc-level comment FIRST: it's then durable,

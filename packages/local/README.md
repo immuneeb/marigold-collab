@@ -182,6 +182,36 @@ automatically. Comments live in the sidecar and are never lost with the daemon.
 pnpm --filter @marigold/local test
 ```
 
+## Telemetry
+
+marigold-draft sends anonymous usage counts on five actions (`draft.opened`,
+`feedback.submitted`, `listen.started`, `share.cloud`, `agent-setup.run`).
+The **entire payload** per event is:
+
+```json
+{ "event": "draft.opened", "version": "0.9.0", "platform": "darwin", "nodeMajor": 22 }
+```
+
+No arguments, paths, file names, doc content, hostname, username, locale, or
+hardware info — and **no client-side identifier of any kind**: nothing is
+persisted to identify your machine. Approximate unique counts come from a
+salted, truncated server-side hash of the request IP (never reversible, raw
+address never stored) — the same posture as every anonymous signal on
+marigold.page.
+
+Turn it off any of these ways (any one wins):
+
+- `marigold-draft telemetry off` (persisted; `on`/`status` also available)
+- `MARIGOLD_TELEMETRY=0`
+- `DO_NOT_TRACK=1` (the [console.dev standard](https://consoledonottrack.com))
+- CI environments are skipped automatically
+
+`MARIGOLD_TELEMETRY_DEBUG=1` prints every payload to stderr as it is sent.
+Sends are fire-and-forget with a 1.5s cap and can never slow, block, or break
+a command. The implementation is [`src/telemetry.ts`](./src/telemetry.ts) —
+audit it. If you point `MARIGOLD_ORIGIN` at a self-hosted instance, pings go
+there, not to us.
+
 ## License
 
 MIT — free forever. See [LICENSE](./LICENSE). Source on GitHub:

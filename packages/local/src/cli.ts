@@ -30,6 +30,7 @@ import { type ChangeView, type ContextDigest, type Episode } from "./store";
 import { type Insight, type InsightSummary } from "./insights";
 import { LocalServer, type ReviewPayload } from "./server";
 import { formatShareResult, ShareError, shareDraft } from "./share";
+import { maybeFirstRunNotice, ping as usagePing, setTelemetry, telemetryStatus } from "./telemetry";
 
 function log(msg: string): void {
   // stderr, so `--json` stdout stays machine-clean
@@ -297,6 +298,10 @@ async function withDoc(file: string | undefined, flags: Record<string, string | 
 async function main(): Promise<void> {
   const { cmd, positional, flags } = parseArgs(process.argv.slice(2));
 
+  // Telemetry disclosure: one dim line, once ever, only where a human is
+  // looking — TTY stderr, never under --json, never in MCP mode.
+  if (cmd !== "mcp" && flags.json !== true) maybeFirstRunNotice((l) => log(dim(l)));
+
   switch (cmd) {
     case "serve":
       await serve(flags);
@@ -323,6 +328,7 @@ async function main(): Promise<void> {
     }
 
     case "agent-setup": {
+      usagePing("agent-setup.run");
       const { runAgentSetup } = await import("./agent-setup");
       runAgentSetup({
         claudeMd: flags["no-claude-md"] !== true,
@@ -338,10 +344,12 @@ async function main(): Promise<void> {
     }
 
     case "open":
+      usagePing("draft.opened");
       await open(positional, flags);
       return;
 
     case "listen":
+      usagePing("listen.started");
       await listen(positional);
       return;
 
@@ -445,6 +453,23 @@ async function main(): Promise<void> {
       return;
     }
 
+    case "telemetry": {
+      const sub = positional[0];
+      if (sub === "off") {
+        setTelemetry(false);
+        log(`${ok(G.ok)} telemetry off ${dim("— persisted; nothing will be sent")}`);
+      } else if (sub === "on") {
+        setTelemetry(true);
+        log(`${ok(G.ok)} telemetry on ${dim("— anonymous usage counts (event name + version + OS)")}`);
+      } else {
+        const s = telemetryStatus();
+        log(`${s.enabled ? warn(G.wait) : dim(G.off)} telemetry ${s.enabled ? "on" : "off"} ${dim(`— ${s.reason}`)}`);
+        log(dim("  payload per event: {event, version, platform, nodeMajor} — nothing else"));
+        log(dim("  see README.md § Telemetry · MARIGOLD_TELEMETRY_DEBUG=1 prints each payload"));
+      }
+      return;
+    }
+
     case "stop": {
       const state = readState();
       if (state) {
@@ -495,6 +520,9 @@ async function main(): Promise<void> {
   reply <file> <id> <text…>   reply to a comment (badged AI)
   resolve|reopen <file> <id>  set a comment's status
   start | status | stop       manage the background server
+  telemetry [on|off|status]   anonymous usage counts (event name + version + OS,
+                              nothing else) — also off via DO_NOT_TRACK=1 or
+                              MARIGOLD_TELEMETRY=0; details in README § Telemetry
   principles [mode] [topic…]  print the Marigold authoring methodology + mode posture pack
                               modes: analyze|learn|judge|decide|organize|tune|do|track
   mcp                         stdio MCP server (for Claude Desktop and other chat clients)

@@ -12,6 +12,10 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { buildStartAnalysisText } from "@marigold/core/principles";
 import { ensureServer, openBrowser, registerDoc, STATE_DIR } from "./client";
+import { ping } from "./telemetry";
+
+declare const __MARIGOLD_DRAFT_VERSION__: string | undefined;
+const MCP_VERSION = typeof __MARIGOLD_DRAFT_VERSION__ === "string" ? __MARIGOLD_DRAFT_VERSION__ : "dev";
 
 const DRAFTS_DIR = join(STATE_DIR, "drafts");
 
@@ -33,6 +37,7 @@ function slug(s: string): string {
 }
 
 async function open(file: string, title?: string, browser = true) {
+  ping("draft.opened");
   const port = await ensureServer();
   const doc = await registerDoc(port, file, title);
   if (browser && doc.connectedClients === 0) openBrowser(doc.url);
@@ -65,7 +70,7 @@ the session must produce) and follow the returned methodology + posture pack.`;
 
 export async function runMcp(): Promise<void> {
   const server = new McpServer(
-    { name: "marigold-draft", version: "0.1.0" },
+    { name: "marigold-draft", version: MCP_VERSION },
     { instructions: DIGEST },
   );
 

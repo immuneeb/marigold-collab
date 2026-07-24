@@ -12,6 +12,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { basename } from "node:path";
 import { parse } from "node-html-parser";
+import { ping } from "./telemetry";
 
 export const DEFAULT_ORIGIN = "https://marigold.page";
 
@@ -96,6 +97,7 @@ export async function shareDraft(file: string, opts: ShareOptions = {}): Promise
   }
 
   if (res.status === 201) {
+    ping("share.cloud");
     return (await res.json()) as QuickSuccess;
   }
 
